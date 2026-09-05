@@ -1,0 +1,2707 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Банхар — 몽골 초원</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#0a0d12; }
+  body { font-family: "Pretendard","Malgun Gothic","Noto Sans KR",system-ui,sans-serif; }
+  #gl { display:block; width:100%; height:100%; touch-action:none; }
+
+  .hud { position:fixed; pointer-events:none; color:#fff; user-select:none; }
+
+  #title {
+    left:26px; top:22px;
+    text-shadow:0 2px 18px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.5);
+    transition:opacity 1.2s ease;
+  }
+  #title .k { font-size:11px; letter-spacing:.42em; opacity:.72; font-weight:500; }
+  #title .m { font-size:30px; font-weight:700; letter-spacing:.02em; margin-top:4px; line-height:1; }
+  #title .s { font-size:12px; opacity:.62; margin-top:7px; letter-spacing:.14em; font-weight:400; }
+
+  #help {
+    left:26px; bottom:24px; font-size:12.5px; line-height:2.05; opacity:.85;
+    text-shadow:0 1px 12px rgba(0,0,0,.6);
+    transition:opacity .8s ease;
+  }
+  #help b {
+    display:inline-block; min-width:26px; text-align:center;
+    padding:1px 7px; margin-right:9px; border-radius:5px;
+    background:rgba(255,255,255,.13); border:1px solid rgba(255,255,255,.22);
+    font-size:11px; font-weight:600; letter-spacing:.03em;
+    box-shadow:0 1px 6px rgba(0,0,0,.3);
+  }
+  #help.dim { opacity:.2; }
+
+  #speed {
+    right:28px; bottom:26px; text-align:right;
+    text-shadow:0 2px 14px rgba(0,0,0,.6);
+  }
+  #speed .v { font-size:34px; font-weight:200; letter-spacing:-.01em; font-variant-numeric:tabular-nums; line-height:1; }
+  #speed .u { font-size:10px; opacity:.55; letter-spacing:.3em; margin-top:5px; }
+  #speed .g { font-size:11px; opacity:.7; letter-spacing:.22em; margin-top:9px; }
+
+  #bar { position:fixed; right:28px; bottom:96px; width:132px; height:2px;
+         background:rgba(255,255,255,.16); border-radius:2px; overflow:hidden; pointer-events:none; }
+  #bar i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#ffd8a0,#fff3dd); transition:width .1s linear; }
+
+  #err { position:fixed; inset:0; display:none; place-items:center; text-align:center;
+         color:#e8ecf2; background:#0a0d12; padding:40px; font-size:14px; line-height:1.9; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div class="hud" id="title">
+  <div class="k">MONGOLIAN STEPPE</div>
+  <div class="m">Банхар</div>
+  <div class="s">방카르 — 초원의 수호견</div>
+</div>
+
+<div class="hud" id="help">
+  <div><b>W</b>달리기 &nbsp; <b>S</b>정지 &nbsp; <b>Q</b>전력 질주</div>
+  <div><b>A</b><b>D</b>방향 전환</div>
+  <div><b>Space</b>점프 &nbsp; <b>E</b>앞구르기</div>
+  <div><b>드래그</b>시점 회전 &nbsp; <b>휠</b>거리</div>
+</div>
+
+<div class="hud" id="speed">
+  <div class="v" id="sv">0.0</div>
+  <div class="u">M / S</div>
+  <div class="g" id="sg">서 있음</div>
+</div>
+<div id="bar"><i id="bi"></i></div>
+
+<div id="err"></div>
+
+<script>
+// if anything fails to initialise, say so instead of showing a black canvas
+window.__err = '';
+window.addEventListener('error', function(e){
+  window.__err = (e.message || '') + ' @' + (e.lineno || 0);
+  var d = document.getElementById('err');
+  if (d) {
+    d.style.display = 'grid';
+    d.textContent = '초기화에 실패했습니다 — ' + window.__err;
+  }
+});
+</script>
+<script>
+"use strict";
+/* ==========================================================================
+   Банхар — Mongolian Steppe
+   Pure WebGL2, single file, no dependencies.
+   ========================================================================== */
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl2', {
+  antialias:true, alpha:false, depth:true, stencil:false,
+  powerPreference:'high-performance', preserveDrawingBuffer:false
+});
+if (!gl) {
+  const e = document.getElementById('err');
+  e.style.display = 'grid';
+  e.textContent = 'WebGL2를 사용할 수 없습니다. 최신 Chrome / Edge / Firefox 에서 열어주세요.';
+  throw new Error('no webgl2');
+}
+
+/* ------------------------------------------------------------------ math -- */
+const T = Math.PI * 2;
+const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
+const lerp  = (a,b,t) => a + (b-a)*t;
+const smoothstep = (a,b,x) => { const t = clamp((x-a)/(b-a),0,1); return t*t*(3-2*t); };
+// frame-rate independent exponential damping
+const damp = (a,b,l,dt) => lerp(a,b,1-Math.exp(-l*dt));
+
+function m4()  { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+function m4id(o){ o[0]=1;o[1]=0;o[2]=0;o[3]=0; o[4]=0;o[5]=1;o[6]=0;o[7]=0;
+                  o[8]=0;o[9]=0;o[10]=1;o[11]=0; o[12]=0;o[13]=0;o[14]=0;o[15]=1; return o; }
+function m4mul(o,a,b){
+  const a00=a[0],a01=a[1],a02=a[2],a03=a[3], a10=a[4],a11=a[5],a12=a[6],a13=a[7],
+        a20=a[8],a21=a[9],a22=a[10],a23=a[11], a30=a[12],a31=a[13],a32=a[14],a33=a[15];
+  for (let i=0;i<4;i++){
+    const b0=b[i*4],b1=b[i*4+1],b2=b[i*4+2],b3=b[i*4+3];
+    o[i*4  ] = b0*a00 + b1*a10 + b2*a20 + b3*a30;
+    o[i*4+1] = b0*a01 + b1*a11 + b2*a21 + b3*a31;
+    o[i*4+2] = b0*a02 + b1*a12 + b2*a22 + b3*a32;
+    o[i*4+3] = b0*a03 + b1*a13 + b2*a23 + b3*a33;
+  }
+  return o;
+}
+function m4trans(o,x,y,z){ m4id(o); o[12]=x;o[13]=y;o[14]=z; return o; }
+function m4rotX(o,a){ const c=Math.cos(a),s=Math.sin(a); m4id(o); o[5]=c;o[6]=s;o[9]=-s;o[10]=c; return o; }
+function m4rotY(o,a){ const c=Math.cos(a),s=Math.sin(a); m4id(o); o[0]=c;o[2]=-s;o[8]=s;o[10]=c; return o; }
+function m4rotZ(o,a){ const c=Math.cos(a),s=Math.sin(a); m4id(o); o[0]=c;o[1]=s;o[4]=-s;o[5]=c; return o; }
+function m4scale(o,x,y,z){ m4id(o); o[0]=x;o[5]=y;o[10]=z; return o; }
+function m4persp(o,fovy,asp,n,f){
+  const t = 1/Math.tan(fovy/2);
+  o.fill(0); o[0]=t/asp; o[5]=t; o[11]=-1;
+  o[10]=(f+n)/(n-f); o[14]=(2*f*n)/(n-f); return o;
+}
+function m4ortho(o,l,r,b,t,n,f){
+  o.fill(0);
+  o[0]=2/(r-l); o[5]=2/(t-b); o[10]=-2/(f-n); o[15]=1;
+  o[12]=-(r+l)/(r-l); o[13]=-(t+b)/(t-b); o[14]=-(f+n)/(f-n); return o;
+}
+function m4look(o,ex,ey,ez,cx,cy,cz,ux,uy,uz){
+  let zx=ex-cx, zy=ey-cy, zz=ez-cz;
+  let l = Math.hypot(zx,zy,zz) || 1; zx/=l; zy/=l; zz/=l;
+  let xx = uy*zz-uz*zy, xy = uz*zx-ux*zz, xz = ux*zy-uy*zx;
+  l = Math.hypot(xx,xy,xz) || 1; xx/=l; xy/=l; xz/=l;
+  const yx = zy*xz-zz*xy, yy = zz*xx-zx*xz, yz = zx*xy-zy*xx;
+  o[0]=xx;o[1]=yx;o[2]=zx;o[3]=0;
+  o[4]=xy;o[5]=yy;o[6]=zy;o[7]=0;
+  o[8]=xz;o[9]=yz;o[10]=zz;o[11]=0;
+  o[12]=-(xx*ex+xy*ey+xz*ez);
+  o[13]=-(yx*ex+yy*ey+yz*ez);
+  o[14]=-(zx*ex+zy*ey+zz*ez);
+  o[15]=1; return o;
+}
+function m4inv(o,m){
+  const a00=m[0],a01=m[1],a02=m[2],a03=m[3], a10=m[4],a11=m[5],a12=m[6],a13=m[7],
+        a20=m[8],a21=m[9],a22=m[10],a23=m[11], a30=m[12],a31=m[13],a32=m[14],a33=m[15];
+  const b00=a00*a11-a01*a10, b01=a00*a12-a02*a10, b02=a00*a13-a03*a10,
+        b03=a01*a12-a02*a11, b04=a01*a13-a03*a11, b05=a02*a13-a03*a12,
+        b06=a20*a31-a21*a30, b07=a20*a32-a22*a30, b08=a20*a33-a23*a30,
+        b09=a21*a32-a22*a31, b10=a21*a33-a23*a31, b11=a22*a33-a23*a32;
+  let det = b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;
+  if (!det) return m4id(o);
+  det = 1/det;
+  o[0]=(a11*b11-a12*b10+a13*b09)*det;  o[1]=(a02*b10-a01*b11-a03*b09)*det;
+  o[2]=(a31*b05-a32*b04+a33*b03)*det;  o[3]=(a22*b04-a21*b05-a23*b03)*det;
+  o[4]=(a12*b08-a10*b11-a13*b07)*det;  o[5]=(a00*b11-a02*b08+a03*b07)*det;
+  o[6]=(a32*b02-a30*b05-a33*b01)*det;  o[7]=(a20*b05-a22*b02+a23*b01)*det;
+  o[8]=(a10*b10-a11*b08+a13*b06)*det;  o[9]=(a01*b08-a00*b10-a03*b06)*det;
+  o[10]=(a30*b04-a31*b02+a33*b00)*det; o[11]=(a21*b02-a20*b04-a23*b00)*det;
+  o[12]=(a11*b07-a10*b09-a12*b06)*det; o[13]=(a00*b09-a01*b07+a02*b06)*det;
+  o[14]=(a31*b01-a30*b03-a32*b00)*det; o[15]=(a20*b03-a21*b01+a22*b00)*det;
+  return o;
+}
+
+/* ----------------------------------------------------------------- noise -- */
+const NZ = 256;
+const noiseBytes = new Uint8Array(NZ*NZ);
+(function(){
+  // deterministic PRNG so terrain is identical every run
+  let s = 0x9e3779b9 >>> 0;
+  const rnd = () => { s ^= s<<13; s>>>=0; s ^= s>>>17; s ^= s<<5; s>>>=0; return s/4294967296; };
+  for (let i=0;i<NZ*NZ;i++) noiseBytes[i] = (rnd()*256)|0;
+})();
+function hashAt(ix,iz){ return noiseBytes[((iz & 255)<<8) | (ix & 255)] / 255; }
+function vnoise(x,z){
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x-ix, fz = z-iz;
+  const ux = fx*fx*fx*(fx*(fx*6-15)+10);
+  const uz = fz*fz*fz*(fz*(fz*6-15)+10);
+  const a = hashAt(ix,iz),   b = hashAt(ix+1,iz);
+  const c = hashAt(ix,iz+1), d = hashAt(ix+1,iz+1);
+  const ab = a+(b-a)*ux, cd = c+(d-c)*ux;
+  return ab + (cd-ab)*uz;
+}
+// value noise that wraps on a lattice period, so generated maps tile cleanly
+function tnoise(x, z, P){
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x-ix, fz = z-iz;
+  const ux = fx*fx*fx*(fx*(fx*6-15)+10);
+  const uz = fz*fz*fz*(fz*(fz*6-15)+10);
+  const w = (v) => ((v % P) + P) % P;
+  const h = (i,j) => hashAt(w(i), w(j));
+  const a = h(ix,iz), b = h(ix+1,iz), c = h(ix,iz+1), d = h(ix+1,iz+1);
+  const ab = a+(b-a)*ux, cd = c+(d-c)*ux;
+  return ab + (cd-ab)*uz;
+}
+
+// MUST stay byte-identical to terrainH() in GLSL
+function terrainH(x,z){
+  let h = 0;
+  h += 7.40 * vnoise(x*0.0092 +  0.0,  z*0.0092 +  0.0);
+  h += 3.30 * vnoise(x*0.0255 + 31.7,  z*0.0255 + 11.3);
+  h += 1.25 * vnoise(x*0.0680 +  7.1,  z*0.0680 + 53.9);
+  h += 0.34 * vnoise(x*0.1750 + 17.3,  z*0.1750 +  3.7);
+  return h - 6.14;
+}
+
+/* ------------------------------------------------------------- gl helpers -- */
+function shader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s);
+    console.error(log, src.split('\n').map((l,i)=>(i+1)+': '+l).join('\n'));
+    throw new Error('shader: ' + log);
+  }
+  return s;
+}
+function program(vsSrc, fsSrc){
+  const p = gl.createProgram();
+  gl.attachShader(p, shader(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+  p.u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i=0;i<n;i++){
+    const info = gl.getActiveUniform(p, i);
+    const name = info.name.replace(/\[0\]$/, '');
+    p.u[name] = gl.getUniformLocation(p, info.name);
+  }
+  return p;
+}
+function buffer(data, target){
+  const b = gl.createBuffer();
+  target = target || gl.ARRAY_BUFFER;
+  gl.bindBuffer(target, b);
+  gl.bufferData(target, data, gl.STATIC_DRAW);
+  return b;
+}
+function attrib(prog, name, buf, size, type, divisor){
+  const loc = gl.getAttribLocation(prog, name);
+  if (loc < 0) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, type || gl.FLOAT, false, 0, 0);
+  if (divisor) gl.vertexAttribDivisor(loc, divisor);
+}
+
+/* --------------------------------------------------------- shader prelude -- */
+const HEAD = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+`;
+
+const COMMON = `
+uniform sampler2D uNoise;
+uniform vec3 uSunDir;      // toward the sun
+uniform vec3 uCamPos;
+uniform vec2 uResolution;
+uniform float uTime;
+
+const vec3 SUN_COL   = vec3(1.00, 0.955, 0.875) * 1.32;
+const vec3 SKY_ZEN   = vec3(0.155, 0.345, 0.760);
+const vec3 SKY_HOR   = vec3(0.680, 0.790, 0.905);
+const vec3 GND_BOUNCE= vec3(0.300, 0.300, 0.205);
+
+float hashN(ivec2 p){ return texelFetch(uNoise, p & ivec2(255), 0).r; }
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = p - i;
+  vec2 u = f*f*f*(f*(f*6.0-15.0)+10.0);
+  ivec2 ii = ivec2(i);
+  float a = hashN(ii);
+  float b = hashN(ii+ivec2(1,0));
+  float c = hashN(ii+ivec2(0,1));
+  float d = hashN(ii+ivec2(1,1));
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+float fbm(vec2 p){
+  float v = 0.0, a = 0.5;
+  for (int i=0;i<5;i++){ v += a*vnoise(p); p = p*2.03 + 17.1; a *= 0.5; }
+  return v;
+}
+float terrainH(vec2 p){
+  float h = 0.0;
+  h += 7.40 * vnoise(p*0.0092 + vec2( 0.0,  0.0));
+  h += 3.30 * vnoise(p*0.0255 + vec2(31.7, 11.3));
+  h += 1.25 * vnoise(p*0.0680 + vec2( 7.1, 53.9));
+  h += 0.34 * vnoise(p*0.1750 + vec2(17.3,  3.7));
+  return h - 6.14;
+}
+
+// cheap sky used both for the dome and for fog — keeps the horizon seamless
+vec3 skyColor(vec3 d){
+  float y  = clamp(d.y, -0.25, 1.0);
+  float t  = pow(clamp(1.0 - y, 0.0, 1.0), 3.2);
+  vec3 col = mix(SKY_ZEN, SKY_HOR, t);
+  float sd = max(dot(d, uSunDir), 0.0);
+  col += SUN_COL * pow(sd, 5.0) * 0.16;
+  col += SUN_COL * pow(sd, 48.0) * 0.30;
+  col = mix(col, vec3(0.80,0.83,0.86), smoothstep(0.02,-0.12,d.y)*0.55);
+  return col;
+}
+
+vec3 applyFog(vec3 col, vec3 wp, float dist){
+  vec3 vd = normalize(wp - uCamPos);
+  float f = 1.0 - exp(-pow(dist*0.0046, 2.05));
+  vec3 fc = skyColor(vd);
+  // sun-facing haze glow
+  fc += SUN_COL * pow(max(dot(vd,uSunDir),0.0), 8.0) * 0.10;
+  return mix(col, fc, clamp(f,0.0,1.0));
+}
+
+`;
+
+const FRAGC = `
+vec3 tonemap(vec3 x){
+  x *= 1.02;
+  vec3 c = (x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14);
+  return clamp(c, 0.0, 1.0);
+}
+vec3 finish(vec3 c){
+  c = tonemap(c);
+  // gentle saturation lift
+  float l = dot(c, vec3(0.2126,0.7152,0.0722));
+  c = mix(vec3(l), c, 1.10);
+  vec2 q = gl_FragCoord.xy / uResolution;
+  float v = smoothstep(1.32, 0.28, length((q-0.5)*vec2(1.06,1.0))*2.0);
+  c *= mix(0.80, 1.0, v);
+  return pow(c, vec3(0.9));
+}
+`;
+
+const SHADOW = `
+uniform sampler2D uShadowMap;
+uniform mat4 uLightVP;
+uniform float uShadowOn;
+float shadowAt(vec3 wp, float ndl){
+  if (uShadowOn < 0.5) return 1.0;
+  vec4 lp = uLightVP * vec4(wp, 1.0);
+  vec3 pc = lp.xyz / lp.w * 0.5 + 0.5;
+  if (pc.x < 0.004 || pc.x > 0.996 || pc.y < 0.004 || pc.y > 0.996 || pc.z > 1.0) return 1.0;
+  float bias = clamp(0.0016 * tan(acos(clamp(ndl,0.02,1.0))), 0.0004, 0.006);
+  float s = 0.0;
+  vec2 tx = vec2(1.0/2048.0);
+  for (int y=-1;y<=1;y++)
+    for (int x=-1;x<=1;x++){
+      float d = texture(uShadowMap, pc.xy + vec2(float(x),float(y))*tx*1.35).r;
+      s += (pc.z - bias > d) ? 0.0 : 1.0;
+    }
+  // fade the shadow out at the edge of the map
+  vec2 e = smoothstep(vec2(0.0), vec2(0.09), pc.xy) * smoothstep(vec2(1.0), vec2(0.91), pc.xy);
+  return mix(1.0, s/9.0, e.x*e.y);
+}
+`;
+
+/* ============================================================== SKY DOME == */
+const skyProg = program(HEAD + `
+out vec2 vNdc;
+void main(){
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  vNdc = p * 2.0 - 1.0;
+  gl_Position = vec4(vNdc, 1.0, 1.0);
+}
+`, HEAD + COMMON + FRAGC + `
+in vec2 vNdc;
+uniform mat4 uInvVP;
+out vec4 fc;
+
+// layered ridge silhouette on the horizon
+float ridge(float a, float seed, float sharp){
+  float v = 0.0, amp = 0.5, f = 1.0;
+  for (int i=0;i<4;i++){
+    v += amp * vnoise(vec2(a*f + seed, seed*0.7));
+    f *= 2.11; amp *= 0.52;
+  }
+  return pow(clamp(v,0.0,1.0), sharp);
+}
+
+void main(){
+  vec4 h = uInvVP * vec4(vNdc, 1.0, 1.0);
+  vec3 d = normalize(h.xyz / h.w - uCamPos);
+
+  vec3 col = skyColor(d);
+
+  // ---- clouds: fbm on a plane far above ------------------------------
+  if (d.y > 0.008) {
+    float H = 620.0;
+    vec2 cp = uCamPos.xz + d.xz * (H / d.y);
+    vec2 uv = cp * 0.00080 + vec2(uTime*0.0022, uTime*0.0009);
+    float n  = fbm(uv);
+    float n2 = fbm(uv*2.6 + 41.0);
+    float cover = smoothstep(0.50, 0.78, n*0.75 + n2*0.25);
+    float wisp  = smoothstep(0.44, 0.86, n*0.62 + n2*0.38) * 0.42;
+    float amt   = clamp(cover + wisp, 0.0, 1.0);
+    amt *= smoothstep(0.008, 0.13, d.y);            // flatten toward horizon
+    float lit = smoothstep(0.35, 0.85, n2);
+    vec3 cc = mix(vec3(0.63,0.66,0.72), vec3(1.02,1.00,0.97), lit);
+    cc += SUN_COL * pow(max(dot(d,uSunDir),0.0), 12.0) * 0.22 * lit;
+    col = mix(col, cc, amt*0.90);
+  }
+
+  // ---- distant mountain ranges ---------------------------------------
+  float az = atan(d.z, d.x);
+  float far  = 0.0430 + 0.0780 * ridge(az*2.30, 11.0, 1.40);
+  float near = 0.0190 + 0.0360 * ridge(az*4.70, 57.0, 1.20);
+  if (d.y < far) {
+    float t = smoothstep(far, far - 0.058, d.y);
+    vec3 mc = mix(vec3(0.560,0.615,0.700), vec3(0.412,0.470,0.578), t);
+    col = mix(col, mc, t*0.95);
+  }
+  if (d.y < near) {
+    float t = smoothstep(near, near - 0.032, d.y);
+    vec3 mc = mix(vec3(0.470,0.520,0.560), vec3(0.348,0.396,0.412), t);
+    col = mix(col, mc, t*0.93);
+  }
+  fc = vec4(finish(col), 1.0);
+}
+`);
+
+/* =============================================================== TERRAIN == */
+const terProg = program(HEAD + COMMON + `
+in vec2 aPos;
+uniform mat4 uVP;
+uniform vec2 uOrigin;
+out vec3 vW;
+out vec3 vN;
+void main(){
+  vec2 xz = aPos + uOrigin;
+  float h = terrainH(xz);
+  vW = vec3(xz.x, h, xz.y);
+  float e = 0.55;
+  float hx = terrainH(xz + vec2(e,0.0));
+  float hz = terrainH(xz + vec2(0.0,e));
+  vN = normalize(vec3(h-hx, e, h-hz));
+  gl_Position = uVP * vec4(vW, 1.0);
+}
+`, HEAD + COMMON + FRAGC + SHADOW + `
+in vec3 vW;
+in vec3 vN;
+out vec4 fc;
+void main(){
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCamPos - vW);
+  float dist = length(uCamPos - vW);
+
+  float m  = vnoise(vW.xz*0.0330 + 3.3);
+  float m2 = vnoise(vW.xz*0.1400 + 9.9);
+  float m3 = vnoise(vW.xz*0.6200);
+  float fuzz = vnoise(vW.xz*7.30 + 21.0)*0.55 + vnoise(vW.xz*19.0 + 4.0)*0.45;
+  float fuzzAmt = smoothstep(1.5, 12.0, dist) * 0.30;
+
+  vec3 dry   = vec3(0.520, 0.470, 0.246);
+  vec3 green = vec3(0.238, 0.302, 0.132);
+  vec3 col = mix(green, dry, clamp(m*1.35 - 0.12, 0.0, 1.0));
+  col = mix(col, col*vec3(1.13,1.09,0.95), m2*0.55);
+  col *= 0.90 + 0.20*m3;
+  col *= 1.0 - fuzzAmt*(0.55 - fuzz*0.85);
+  col *= mix(1.070, 1.0, smoothstep(12.5, 20.5, dist));   // matches the blade field
+
+  float slope = 1.0 - N.y;
+  col = mix(col, vec3(0.395,0.340,0.262), smoothstep(0.16,0.52,slope));
+
+  float ndl = dot(N, uSunDir);
+  float sh  = shadowAt(vW, max(ndl,0.0));
+  vec3 lit  = col * SUN_COL * max(ndl, 0.0) * sh;
+  vec3 amb  = col * mix(GND_BOUNCE, SKY_HOR*0.66, N.y*0.5+0.5) * 0.86;
+  vec3 c = lit + amb;
+
+  // grazing sheen so distant ground doesn't go flat
+  c += SUN_COL * pow(1.0 - max(dot(N,V),0.0), 4.0) * 0.045;
+
+  c = applyFog(c, vW, dist);
+  fc = vec4(finish(c), 1.0);
+}
+`);
+
+/* ================================================================= GRASS == */
+const grsProg = program(HEAD + COMMON + `
+in vec2 aRel;
+in float aFade;
+uniform mat4 uVP;
+uniform vec2 uOrigin;
+uniform float uSpacing;
+uniform vec3 uDog;
+uniform vec3 uDogFwd;
+uniform float uDogSpeed;
+uniform float uDogAir;
+
+out vec3 vW;
+out vec3 vN;
+out vec3 vCol;
+out float vT;
+out float vAo;
+
+void main(){
+  vec2 base = uOrigin + aRel;
+  ivec2 cell = ivec2(floor(base/uSpacing + 0.5));
+  float r1 = hashN(cell);
+  float r2 = hashN(cell + ivec2(37,91));
+  float r3 = hashN(cell + ivec2(-53,17));
+  float r4 = hashN(cell + ivec2(101,-7));
+
+  vec2 pos = base + (vec2(r1,r2) - 0.5) * uSpacing * 1.70;
+  float gy = terrainH(pos) - 0.055;
+
+  float dCam = length(pos - uCamPos.xz);
+  float fade = smoothstep(19.5, 13.0, dCam);
+  if (fade <= 0.001) { gl_Position = vec4(2.0,2.0,2.0,1.0); return; }
+
+  // vertex layout: 3 quad rows (6 verts) + tip
+  int id = gl_VertexID;
+  float side = (id >= 6) ? 0.0 : (float(id & 1) * 2.0 - 1.0);
+  float t    = (id >= 6) ? 1.0 : floor(float(id) * 0.5) / 3.0;
+  vT = t;
+
+  // clumping: the steppe grows in tufts with scuffed bare patches between
+  float clump = vnoise(pos*0.19 + 5.0);
+  float tuft = smoothstep(0.24, 0.52, vnoise(pos*0.055 + 61.0));
+  float hgt = (0.092 + 0.128*r3 + 0.098*clump) * (0.55 + 0.45*tuft) * (0.90 + 0.30*aFade);
+  float wid = 0.0072 * (0.70 + 0.60*r4) * (1.0 - t*0.62) * (0.90 + 0.45*aFade);
+
+  float ang = r1 * 6.2831;
+  vec2 dir  = vec2(cos(ang), sin(ang));
+  vec2 perp = vec2(-dir.y, dir.x);
+
+  // wind: two travelling waves + gust field
+  float gust = vnoise(pos*0.045 + vec2(uTime*0.30, uTime*0.14));
+  float w = sin(uTime*1.85 + pos.x*0.42 + pos.y*0.31 + r1*6.28) * 0.55
+          + sin(uTime*3.10 + pos.x*0.87 - pos.y*0.53) * 0.22;
+  float bend = (0.11 + 0.30*gust) * w + 0.06;
+
+  vec2 windDir = normalize(vec2(0.86, 0.51));
+  vec2 push = windDir * bend;
+
+  // the dog parts the grass as it runs through
+  vec2 dv = pos - uDog.xz;
+  float dd = length(dv);
+  float infl = smoothstep(0.88, 0.18, dd) * smoothstep(0.55, 0.10, uDogAir)
+             * clamp(0.20 + 0.075*uDogSpeed, 0.20, 1.30);
+  if (infl > 0.0){
+    vec2 away = dd > 0.0001 ? dv/dd : windDir;
+    push += away * infl * 0.95;
+    // wake behind the animal
+    float behind = clamp(-dot(normalize(vec2(dv.x,dv.y)+1e-5), uDogFwd.xz), 0.0, 1.0);
+    push -= uDogFwd.xz * infl * behind * 0.30;
+  }
+
+  float bendT = t*t;
+  vec3 p;
+  p.xz = pos + perp*side*wid + push*bendT*hgt;
+  p.y  = gy + hgt * t * (1.0 - 0.30*bendT) * fade;
+
+  vec3 tangent = normalize(vec3(push.x*hgt*2.0*t, hgt*(1.0-0.6*bendT), push.y*hgt*2.0*t));
+  vec3 bnorm   = normalize(cross(tangent, vec3(perp.x,0.0,perp.y)));
+  vN = normalize(mix(vec3(0.0,1.0,0.0), bnorm, 0.32));
+
+  // identical to the terrain shader's palette, so grass and ground never split
+  float g1 = vnoise(pos*0.0330 + 3.3);
+  float g2 = vnoise(pos*0.1400 + 9.9);
+  float g3 = vnoise(pos*0.6200);
+  vec3 c = mix(vec3(0.238,0.302,0.132), vec3(0.520,0.470,0.246),
+               clamp(g1*1.35 - 0.12, 0.0, 1.0));
+  c = mix(c, c*vec3(1.13,1.09,0.95), g2*0.55);
+  c *= 0.90 + 0.20*g3;
+  c *= 0.80 + 0.42*r3;                           // blade-to-blade variation
+  c = mix(c*0.72, c*1.18, t);                    // shaded base, sunlit tip
+  vCol = c;
+  vAo = mix(0.80, 1.0, smoothstep(0.0, 0.60, t));
+
+  vW = p;
+  gl_Position = uVP * vec4(p, 1.0);
+}
+`, HEAD + COMMON + FRAGC + SHADOW + `
+in vec3 vW;
+in vec3 vN;
+in vec3 vCol;
+in float vT;
+in float vAo;
+out vec4 fc;
+void main(){
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  vec3 V = normalize(uCamPos - vW);
+  float dist = length(uCamPos - vW);
+
+  float ndl = dot(N, uSunDir);
+  float sh  = shadowAt(vW, max(ndl,0.0));
+  float wrapD = clamp((ndl + 0.42)/1.42, 0.0, 1.0);
+
+  vec3 c = vCol * SUN_COL * wrapD * sh * vAo;
+  c += vCol * mix(GND_BOUNCE, SKY_HOR*0.55, 0.6) * 0.78 * vAo;
+
+  // translucency — sun shining through the blade
+  float back = pow(clamp(dot(-V, uSunDir)*0.5+0.5, 0.0, 1.0), 3.0);
+  c += vCol * SUN_COL * back * 0.55 * vT * sh;
+
+  c = applyFog(c, vW, dist);
+  fc = vec4(finish(c), 1.0);
+}
+`);
+
+/* =================================================================== DOG == */
+const DOG_VS_BODY = `
+in vec3 aPos;
+in vec3 aNor;
+in vec4 aCol;
+in vec4 aBi;
+in vec4 aBw;
+in float aFur;           // coat length at this vertex, in metres
+in vec2 aMark;           // x: mahogany amount   y: white amount
+uniform mat4 uBones[24];
+uniform mat4 uModel;
+uniform float uShell;    // 0 = skin, 1..uShellN = fur layers
+uniform float uShellN;
+uniform vec3 uComb;      // where the coat is dragged: gravity plus airflow
+
+mat4 skinMat(){
+  return uBones[int(aBi.x)]*aBw.x + uBones[int(aBi.y)]*aBw.y
+       + uBones[int(aBi.z)]*aBw.z + uBones[int(aBi.w)]*aBw.w;
+}
+`;
+
+const dogProg = program(HEAD + COMMON + DOG_VS_BODY + `
+uniform mat4 uVP;
+out vec3 vW;
+out vec3 vN;
+out vec4 vCol;
+out vec3 vLocal;
+out float vShellT;
+out float vFur;
+out vec2 vMark;
+out vec3 vFlow;
+void main(){
+  mat4 S = skinMat();
+  vec4 sp = S * vec4(aPos, 1.0);
+  vec3 sn = normalize(mat3(S) * aNor);
+  // each shell lifts off the skin along the normal and is combed over as it goes
+  float ft = uShell / uShellN;
+  vShellT = ft;
+  vFur = aFur;
+  vMark = aMark;
+  vec3 flow = uComb - sn * dot(uComb, sn);           // comb along the surface
+  float fl = length(flow);
+  flow = fl > 1e-4 ? flow / fl : vec3(0.0);
+  // the shells are only the dense undercoat now; the strands are the topcoat
+  sp.xyz += sn * (aFur * ft * 0.34) + flow * (aFur * ft * 0.34);
+  vFlow = flow;
+  vec4 wp = uModel * vec4(sp.xyz, 1.0);
+  vW = wp.xyz;
+  vN = normalize(mat3(uModel) * sn);
+  vCol = aCol;
+  vLocal = aPos;
+  gl_Position = uVP * wp;
+}
+`, HEAD + COMMON + FRAGC + SHADOW + `
+in vec3 vW;
+in vec3 vN;
+in vec4 vCol;
+in vec3 vLocal;
+in float vShellT;
+in float vFur;
+in vec2 vMark;
+in vec3 vFlow;
+uniform mat4 uModel;
+uniform vec3 uTan;
+uniform vec3 uCream;
+uniform float uShell;
+uniform float uShellN;
+uniform sampler2D uDetail;
+out vec4 fc;
+
+/* the detail map projected on all three axes, blended by the normal */
+vec4 triDetail(vec3 q, vec3 w, float sc){
+  return texture(uDetail, q.yz*sc)*w.x
+       + texture(uDetail, q.xz*sc)*w.y
+       + texture(uDetail, q.xy*sc)*w.z;
+}
+
+// one value per hair follicle — constant along a strand, so the shells stack
+float strand(vec3 q){
+  vec3 e = q * vec3(1.0, 1.0, 0.34);       // elongated head-to-tail
+  return vnoise(e.xz*168.0 + e.y*97.0) * 0.55
+       + vnoise(e.yz*231.0 + e.x*51.0) * 0.45;
+}
+
+void main(){
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCamPos - vW);
+  if (dot(N, V) < 0.0) N = -N;          // closed surface: always face the eye
+  float dist = length(uCamPos - vW);
+
+  float shine = vCol.a;                 // 0 = fur, 1 = nose/eye
+
+  // fur shells: fewer strands survive the further out the layer sits, which is
+  // what gives the coat a soft, thinning edge instead of a hard rubber outline
+  float shag = smoothstep(0.005, 0.026, vFur);   // how much coat this spot carries
+  float ao;
+  if (uShell > 0.5) {
+    if (shine > 0.4 || vFur < 0.004) discard;
+    if (strand(vLocal) < mix(0.04, 0.80, vShellT)) discard;
+    ao = mix(1.0, mix(0.58, 1.18, vShellT), shag);
+  } else {
+    // the skin layer is only seen through gaps in the coat, so it stays dark
+    ao = mix(1.0, 0.52, shag);
+  }
+
+  vec3 alb = vCol.rgb;
+
+  // ---- surface relief from the detail map -------------------------------
+  vec3 tw = abs(N); tw /= (tw.x + tw.y + tw.z);
+  const float DSC = 30.0;
+  vec4 d0 = triDetail(vLocal, tw, DSC);
+  // pores over hide, pebbled leather over the nose
+  float hgt = mix(d0.r, d0.g, shine);
+  float relief = mix(0.026, 0.105, shine) * (1.0 - smoothstep(0.010, 0.030, vFur));
+  {
+    // surface-space gradient straight from the screen-space derivatives
+    vec3 sS = dFdx(vW), sT = dFdy(vW);
+    vec3 R1 = cross(sT, N), R2 = cross(N, sS);
+    float det = dot(sS, R1);
+    vec3 g = sign(det) * (dFdx(hgt)*R1 + dFdy(hgt)*R2);
+    N = normalize(abs(det)*N - relief*g);
+  }
+
+  // fine fur break-up
+  float fz = vnoise(vLocal.xz*54.0 + vLocal.y*33.0) * 0.5
+           + vnoise(vLocal.yz*110.0) * 0.5;
+  alb *= mix(0.76, 1.26, fz) * mix(0.90, 1.10, d0.b);
+  alb *= 1.0 + 0.17*vShellT*shag;       // guard hairs are sun-bleached at the tip
+  alb = mix(alb, vCol.rgb*mix(0.84,1.16,d0.g), shine);   // leather mottling
+
+  // markings resolved here, not smeared between vertices: the fine grain
+  // channel dithers the boundary so it breaks up at hair scale
+  if (shine < 0.4){
+    float g = texture(uDetail, vLocal.xz*96.0 + vLocal.y*17.0).b - 0.5;
+    alb = mix(alb, uTan,   smoothstep(0.44, 0.56, vMark.x + g*0.42));
+    alb = mix(alb, uCream, smoothstep(0.45, 0.55, vMark.y + g*0.36));
+  }
+
+  float ndl = dot(N, uSunDir);
+  float sh  = shadowAt(vW, max(ndl,0.0));
+
+  // wrapped diffuse reads as soft fur
+  float wrapD = clamp((ndl + 0.42)/1.42, 0.0, 1.0);
+  wrapD = mix(wrapD*wrapD*1.05, max(ndl,0.0), shine);
+  vec3 c = alb * SUN_COL * wrapD * mix(sh, sh*0.55+0.45, 0.2);
+
+  vec3 amb = alb * mix(GND_BOUNCE, mix(SKY_HOR, vec3(0.80,0.78,0.74), 0.45), N.y*0.5+0.5) * 0.82;
+  c = (c + amb) * ao;
+
+  // specular — the coat a faint sheen, the nose a hard wet one, both broken
+  // up by the roughness channel so nothing reads as a moulded surface
+  vec3 H = normalize(uSunDir + V);
+  float rough = mix(0.80, 1.30, d0.a);
+  float spow = mix(9.0, 200.0, shine) * rough;
+  float spec = pow(max(dot(N,H),0.0), spow)
+             + pow(max(dot(N,H),0.0), mix(40.0, 200.0, shine)*rough) * 0.6;
+  c += SUN_COL * spec * mix(0.048, 0.95, shine) * sh * mix(1.25, 0.75, d0.a);
+
+  // anisotropic sheen along the hair, the way light runs down a dog's coat
+  if (shag > 0.15){
+    vec3 tang = normalize(mat3(uModel) * vFlow + 1e-5);
+    float th = dot(tang, uSunDir), tv = dot(tang, V);
+    float sinTH = sqrt(max(0.0, 1.0 - th*th));
+    float sinTV = sqrt(max(0.0, 1.0 - tv*tv));
+    float kk = pow(clamp(sinTH*sinTV - th*tv, 0.0, 1.0), 44.0);
+    c += SUN_COL * kk * 0.11 * shag * sh;
+  }
+
+  // rim / fur backlight — the halo that sells the coat
+  float fres = pow(1.0 - max(dot(N,V),0.0), 3.6);
+  float bl = pow(clamp(dot(-V, uSunDir)*0.5+0.5, 0.0, 1.0), 3.0);
+  c += SUN_COL * fres * (0.045 + 0.42*bl) * (1.0 - shine*0.9) * mix(0.25,1.0,sh)
+     * (1.0 + 2.2*vShellT);
+  c += SKY_HOR * fres * 0.045;
+
+  c = applyFog(c, vW, dist);
+  fc = vec4(finish(c), 1.0);
+}
+`);
+
+const depthProg = program(HEAD + DOG_VS_BODY + `
+uniform mat4 uLightVP;
+void main(){
+  mat4 S = skinMat();
+  vec4 sp = S * vec4(aPos, 1.0);
+  sp.xyz += normalize(mat3(S) * aNor) * (aFur * 0.45);
+  gl_Position = uLightVP * uModel * vec4(sp.xyz, 1.0);
+}
+`, HEAD + `
+void main(){}
+`);
+
+/* ================================================================== FUR == */
+/* Every hair is a real tapered ribbon grown off the skin and skinned to the
+   same skeleton, so the coat moves with the dog instead of sitting on it. */
+const FUR_SEG = 5;
+const furProg = program(HEAD + COMMON + `
+in vec3 aRoot;      // follicle position on the skin, rest pose
+in vec3 aRNrm;      // skin normal there
+in vec3 aRCol;      // coat colour at the root
+in vec4 aRPar;      // x: length  y: seed  z,w: clump direction
+in vec4 aRBi;
+in vec4 aRBw;
+uniform mat4 uBones[24];
+uniform mat4 uModel;
+uniform mat4 uVP;
+uniform vec3 uComb;      // gravity plus airflow, model space
+uniform float uSegs;
+uniform float uWind;
+
+out vec3 vW;
+out vec3 vTan;
+out vec3 vNrm;
+out vec3 vCol;
+out float vT;
+out float vLen;
+out float vWhisk;
+
+void main(){
+  mat4 S = uBones[int(aRBi.x)]*aRBw.x + uBones[int(aRBi.y)]*aRBw.y
+         + uBones[int(aRBi.z)]*aRBw.z + uBones[int(aRBi.w)]*aRBw.w;
+
+  int id  = gl_VertexID;
+  float t = floor(float(id) * 0.5) / uSegs;
+  float side = float(id & 1) * 2.0 - 1.0;
+
+  vec3 root = (S * vec4(aRoot, 1.0)).xyz;
+  vec3 n    = normalize(mat3(S) * aRNrm);
+  float len = aRPar.x;
+  float whisk = step(1.5, aRPar.y);      // >1 marks a vibrissa, not coat
+  float seed = fract(aRPar.y);
+  vWhisk = whisk;
+
+  // the comb laid flat against the skin is the direction the coat lies in
+  vec3 flow = uComb - n * dot(uComb, n);
+  float fl = length(flow);
+  flow = fl > 1e-4 ? flow / fl : vec3(0.0);
+
+  // two tangents so each hair can be nudged off its neighbours into a clump
+  vec3 t1 = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0,1.0,0.0) : vec3(1.0,0.0,0.0)));
+  vec3 t2 = cross(n, t1);
+
+  float sway = sin(uWind*1.7 + seed*41.0) * 0.20 + sin(uWind*3.3 + seed*17.0) * 0.09;
+
+  // a whisker is stiff: it leaves the skin straight and hardly combs, and it
+  // sweeps forward off the muzzle instead of standing on the normal
+  float bendK  = mix(1.0, 0.22, whisk);
+  float standK = mix(1.0, 1.30, whisk);
+  vec3 fwd = normalize(mat3(S) * vec3(0.0, -0.20, 1.0));
+  vec3 grow = normalize(mix(n, normalize(n*0.70 + fwd*0.85), whisk));
+  vec3 pos = root
+           + grow * (len * t * (1.06 - 0.26*t) * standK)
+           + flow * (len * t * t * (0.66 + 0.34*seed) * bendK)
+           + (t1*aRPar.z + t2*aRPar.w) * (len * t * t * 0.85)
+           + t1 * (len * t * t * sway * 0.30 * bendK)
+           + vec3(0.0,-1.0,0.0) * (len * t*t*t * mix(0.30, 0.55, whisk));
+
+  // tangent by differencing a hair's own curve
+  float t2n = min(t + 0.12, 1.0);
+  vec3 pos2 = root
+            + grow * (len * t2n * (1.06 - 0.26*t2n) * standK)
+            + flow * (len * t2n * t2n * (0.66 + 0.34*seed) * bendK)
+            + (t1*aRPar.z + t2*aRPar.w) * (len * t2n * t2n * 0.85);
+  vec3 tan = normalize(pos2 - pos + n * 1e-4);
+
+  vec4 wp = uModel * vec4(pos, 1.0);
+  vec3 wtan = normalize(mat3(uModel) * tan);
+  vec3 view = normalize(uCamPos - wp.xyz);
+  vec3 wide = normalize(cross(wtan, view));
+
+  float w = mix(0.0040, 0.0009, t) * (0.60 + 0.80*seed) * clamp(len/0.020, 0.45, 1.0);
+  w = mix(w, mix(0.0019, 0.0006, t), whisk);
+  wp.xyz += wide * (w * side);
+
+  vW = wp.xyz;
+  vTan = wtan;
+  vNrm = normalize(mat3(uModel) * mix(n, tan, 0.25));
+  vCol = aRCol;
+  vT = t;
+  vLen = len;
+  gl_Position = uVP * wp;
+}
+`, HEAD + COMMON + FRAGC + SHADOW + `
+in vec3 vW;
+in vec3 vTan;
+in vec3 vNrm;
+in vec3 vCol;
+in float vT;
+in float vLen;
+in float vWhisk;
+out vec4 fc;
+
+void main(){
+  vec3 V = normalize(uCamPos - vW);
+  vec3 Tn = normalize(vTan);
+  float dist = length(uCamPos - vW);
+
+  // Kajiya-Kay: a hair has no normal, only an axis
+  float th = dot(Tn, uSunDir);
+  float tv = dot(Tn, V);
+  float sinTH = sqrt(max(0.0, 1.0 - th*th));
+  float sinTV = sqrt(max(0.0, 1.0 - tv*tv));
+
+  float sh = shadowAt(vW, sinTH);
+  // hair scatters, so light wraps right around the strand
+  float diff = mix(0.20, 1.0, sinTH);
+  // deeper in the coat, less light reaches the hair; a short coat has no depth
+  float thick = smoothstep(0.006, 0.030, vLen) * (1.0 - vWhisk*0.75);
+  float depth = mix(1.0, mix(0.26, 1.02, vT*vT*0.55 + vT*0.45), thick);
+
+  vec3 alb = vCol * mix(1.0, mix(0.88, 1.16, vT), thick);
+  alb = mix(alb, vec3(0.395, 0.372, 0.340), vWhisk);   // vibrissae are pale
+  vec3 c = alb * SUN_COL * diff * depth * mix(sh, sh*0.5+0.5, 0.25);
+  c += alb * mix(GND_BOUNCE, SKY_HOR*0.95, 0.55) * 0.74 * depth;
+
+  // the sheen a black coat carries, tinted by the hair rather than white
+  float spec = pow(clamp(sinTH*sinTV - th*tv, 0.0, 1.0), 34.0);
+  c += mix(SUN_COL*0.35, SUN_COL*alb*7.0, 0.6) * spec * 0.30 * sh * mix(0.4, 1.0, vT);
+
+  // rim: sun through the coat is what makes a shaggy dog glow
+  float back = pow(clamp(dot(-V, uSunDir)*0.5 + 0.5, 0.0, 1.0), 2.6);
+  c += alb * SUN_COL * back * 0.62 * vT * mix(0.3, 1.0, sh);
+
+  c = applyFog(c, vW, dist);
+  fc = vec4(finish(c), 1.0);
+}
+`);
+
+/* ================================================================== DUST == */
+const dustProg = program(HEAD + COMMON + `
+in vec3 aDPos;
+in vec4 aDData;          // x: radius  y: alpha  z: seed  w: spin
+uniform mat4 uVP;
+uniform vec3 uRight;
+uniform vec3 uUp;
+out vec2 vUv;
+out float vA;
+out float vSeed;
+void main(){
+  int id = gl_VertexID;
+  vec2 q = vec2((id == 1 || id == 2) ? 1.0 : -1.0, (id >= 2) ? 1.0 : -1.0);
+  vUv = q;
+  vA = aDData.y;
+  vSeed = aDData.z;
+  float c = cos(aDData.w), sn = sin(aDData.w);
+  vec2 r = vec2(q.x*c - q.y*sn, q.x*sn + q.y*c) * aDData.x;
+  vec3 wp = aDPos + uRight*r.x + uUp*r.y;
+  gl_Position = uVP * vec4(wp, 1.0);
+}
+`, HEAD + COMMON + FRAGC + `
+in vec2 vUv;
+in float vA;
+in float vSeed;
+out vec4 fc;
+void main(){
+  float d = length(vUv);
+  if (d > 1.0) discard;
+  float n = vnoise(vUv*3.1 + vSeed*23.0);
+  float a = smoothstep(1.0, 0.12, d) * vA * (0.45 + 0.85*n);
+  vec3 c = mix(vec3(0.630,0.600,0.455), vec3(0.815,0.795,0.665), n) * (0.88 + 0.24*vSeed);
+  c += SUN_COL * 0.12;
+  fc = vec4(finish(c), clamp(a, 0.0, 1.0));
+}
+`);
+
+const DUST_MAX = 130;
+const dust = [];
+for (let i=0;i<DUST_MAX;i++)
+  dust.push({ life:0, max:1, x:0, y:0, z:0, vx:0, vy:0, vz:0, r:0.1, seed:0, spin:0 });
+let dustNext = 0, dustLive = 0;
+const dustPos  = new Float32Array(DUST_MAX*3);
+const dustData = new Float32Array(DUST_MAX*4);
+const dustPosBuf  = gl.createBuffer();
+const dustDataBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, dustPosBuf);
+gl.bufferData(gl.ARRAY_BUFFER, dustPos, gl.DYNAMIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, dustDataBuf);
+gl.bufferData(gl.ARRAY_BUFFER, dustData, gl.DYNAMIC_DRAW);
+const dustVao = gl.createVertexArray();
+gl.bindVertexArray(dustVao);
+attrib(dustProg, 'aDPos',  dustPosBuf,  3, gl.FLOAT, 1);
+attrib(dustProg, 'aDData', dustDataBuf, 4, gl.FLOAT, 1);
+gl.bindVertexArray(null);
+
+let dustSeed = 7;
+function drnd(){ dustSeed = (dustSeed*1664525 + 1013904223) >>> 0; return dustSeed/4294967296; }
+
+function spawnDust(x, y, z, power){
+  const d = dust[dustNext];
+  dustNext = (dustNext + 1) % DUST_MAX;
+  d.x = x + (drnd()-0.5)*0.10;
+  d.y = y + 0.02 + drnd()*0.05;
+  d.z = z + (drnd()-0.5)*0.10;
+  const a = drnd()*Math.PI*2, sp = (0.20 + drnd()*0.50)*power;
+  d.vx = Math.cos(a)*sp;
+  d.vz = Math.sin(a)*sp;
+  d.vy = (0.30 + drnd()*0.60)*power;
+  d.max = 0.42 + drnd()*0.55;
+  d.life = d.max;
+  d.r = 0.040 + drnd()*0.050;
+  d.seed = drnd();
+  d.spin = drnd()*Math.PI*2;
+}
+
+function updateDust(dt){
+  let n = 0;
+  for (let i=0;i<DUST_MAX;i++){
+    const d = dust[i];
+    if (d.life <= 0) continue;
+    d.life -= dt;
+    if (d.life <= 0) continue;
+    d.vy -= 1.25*dt;
+    const kx = Math.exp(-2.6*dt), ky = Math.exp(-1.3*dt);
+    d.vx *= kx; d.vz *= kx; d.vy *= ky;
+    d.x += d.vx*dt; d.y += d.vy*dt; d.z += d.vz*dt;
+    const k = d.life / d.max;
+    dustPos[n*3] = d.x; dustPos[n*3+1] = d.y; dustPos[n*3+2] = d.z;
+    dustData[n*4]   = d.r * (1.0 + (1.0-k)*2.6);
+    dustData[n*4+1] = Math.min(1, (1-k)*5.0) * k * 0.46;
+    dustData[n*4+2] = d.seed;
+    dustData[n*4+3] = d.spin + (1.0-k)*1.3;
+    n++;
+  }
+  dustLive = n;
+  if (n){
+    gl.bindBuffer(gl.ARRAY_BUFFER, dustPosBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, dustPos, 0, n*3);
+    gl.bindBuffer(gl.ARRAY_BUFFER, dustDataBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, dustData, 0, n*4);
+  }
+}
+
+/* ========================================================== noise texture == */
+const noiseTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, NZ, NZ, 0, gl.RED, gl.UNSIGNED_BYTE, noiseBytes);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+/* ========================================================== detail maps == */
+/* One texture carries every surface detail the shaders need. Cellular cells
+   are laid out on a wrapping grid and the noise uses a wrapping lattice, so
+   the whole map tiles without a seam under triplanar projection. */
+const DETAIL_N = 256;
+const detailTex = (function(){
+  const n = DETAIL_N, data = new Uint8Array(n*n*4);
+  const G = 17;                                   // cellular feature grid
+  const fx = new Float32Array(G*G), fy = new Float32Array(G*G);
+  let sd = 0x5f3759df >>> 0;
+  const rr = () => { sd ^= sd<<13; sd>>>=0; sd ^= sd>>>17; sd ^= sd<<5; sd>>>=0; return sd/4294967296; };
+  for (let i=0;i<G*G;i++){ fx[i] = 0.15 + rr()*0.70; fy[i] = 0.15 + rr()*0.70; }
+
+  for (let y=0;y<n;y++){
+    const v = y/n*G;
+    const cy = Math.floor(v);
+    for (let x=0;x<n;x++){
+      const u = x/n*G;
+      const cx = Math.floor(u);
+      // nearest feature point over the 3x3 neighbourhood, grid wrapped
+      let d1 = 9;
+      for (let j=-1;j<=1;j++)
+        for (let i=-1;i<=1;i++){
+          const gx = ((cx+i)%G+G)%G, gy = ((cy+j)%G+G)%G;
+          const px = cx+i+fx[gy*G+gx], py = cy+j+fy[gy*G+gx];
+          const dd = (px-u)*(px-u) + (py-v)*(py-v);
+          if (dd < d1) d1 = dd;
+        }
+      const cell = clamp(Math.sqrt(d1)*2.15, 0, 1);
+
+      // pores: a few wrapping octaves
+      let po = 0, a = 0.5, f = 1;
+      for (let o=0;o<4;o++){
+        po += a * tnoise(x/n*16*f, y/n*16*f, 16*f);
+        f *= 2; a *= 0.5;
+      }
+      const grain = tnoise(x/n*64, y/n*12, 64);            // stretched, hair-like
+      const rough = tnoise(x/n*8 + 0.5, y/n*8 + 0.5, 8);
+
+      const k = (y*n + x)*4;
+      data[k  ] = (clamp(po,0,1)*255)|0;
+      data[k+1] = (cell*255)|0;
+      data[k+2] = (clamp(grain,0,1)*255)|0;
+      data[k+3] = (clamp(rough,0,1)*255)|0;
+    }
+  }
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, n, n, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  return tex;
+})();
+
+/* ============================================================ shadow map == */
+const SHADOW_SIZE = 2048;
+const shadowTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, shadowTex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE, 0,
+              gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+const shadowFbo = gl.createFramebuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shadowTex, 0);
+gl.drawBuffers([gl.NONE]);
+gl.readBuffer(gl.NONE);
+const shadowOK = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+/* ========================================================= terrain mesh === */
+const TER_N = 200, TER_R = 420;
+const terVerts = new Float32Array((TER_N+1)*(TER_N+1)*2);
+(function(){
+  let k = 0;
+  const warp = u => { const s = Math.sign(u), a = Math.abs(u); return s*(0.115*a + 0.885*a*a*a); };
+  for (let j=0;j<=TER_N;j++){
+    const v = warp(j/TER_N*2-1)*TER_R;
+    for (let i=0;i<=TER_N;i++){
+      terVerts[k++] = warp(i/TER_N*2-1)*TER_R;
+      terVerts[k++] = v;
+    }
+  }
+})();
+const terIdx = new Uint32Array(TER_N*TER_N*6);
+(function(){
+  let k = 0;
+  for (let j=0;j<TER_N;j++)
+    for (let i=0;i<TER_N;i++){
+      const a = j*(TER_N+1)+i, b = a+1, c = a+TER_N+1, d = c+1;
+      terIdx[k++]=a; terIdx[k++]=c; terIdx[k++]=b;
+      terIdx[k++]=b; terIdx[k++]=c; terIdx[k++]=d;
+    }
+})();
+const terVao = gl.createVertexArray();
+gl.bindVertexArray(terVao);
+attrib(terProg, 'aPos', buffer(terVerts), 2);
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer(terIdx, gl.ELEMENT_ARRAY_BUFFER));
+gl.bindVertexArray(null);
+
+/* ============================================================ grass field == */
+const GRASS_SPACING = 0.096;
+let grassCount = 0;
+const grassVao = gl.createVertexArray();
+(function(){
+  const R = 17, half = Math.ceil(R/GRASS_SPACING);
+  const items = [];
+  let seed = 12345;
+  const rnd = () => { seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; };
+  for (let j=-half;j<=half;j++)
+    for (let i=-half;i<=half;i++){
+      const x = i*GRASS_SPACING, z = j*GRASS_SPACING;
+      const d = Math.hypot(x,z);
+      if (d > R) continue;
+      const p = d < 5.0 ? 1 : clamp(1.0 - (d-5.0)/14, 0.32, 1);
+      if (rnd() > p) continue;
+      items.push([x, z, d, Math.min(1.7, 1/Math.sqrt(p)) - 1]);
+    }
+  items.sort((a,b) => a[2]-b[2]);
+  const rel = new Float32Array(items.length*2);
+  const fad = new Float32Array(items.length);
+  for (let i=0;i<items.length;i++){
+    rel[i*2] = items[i][0]; rel[i*2+1] = items[i][1];
+    fad[i] = items[i][3];
+  }
+  grassCount = items.length;
+  gl.bindVertexArray(grassVao);
+  attrib(grsProg, 'aRel',  buffer(rel), 2, gl.FLOAT, 1);
+  attrib(grsProg, 'aFade', buffer(fad), 1, gl.FLOAT, 1);
+  gl.bindVertexArray(null);
+})();
+
+/* ================================================================ SKELETON = */
+const B = {};
+const bones = [];
+function bone(name, parent, x, y, z){
+  const i = bones.length;
+  B[name] = i;
+  bones.push({ name, parent: parent === null ? -1 : B[parent], rest:[x,y,z], off:[0,0,0],
+               rx:0, ry:0, rz:0, local:m4(), world:m4(), skin:m4() });
+  return i;
+}
+//    name        parent      x       y      z
+bone('root',   null,        0.000, 0.622, -0.308);
+bone('spine',  'root',      0.000, 0.620, -0.046);
+bone('chest',  'spine',     0.000, 0.612,  0.200);
+bone('neck',   'chest',     0.000, 0.694,  0.284);
+bone('head',   'neck',      0.000, 0.980,  0.446);
+bone('tail0',  'root',      0.000, 0.672, -0.356);
+bone('tail1',  'tail0',     0.000, 0.812, -0.424);
+bone('tail2',  'tail1',     0.000, 0.948, -0.406);
+bone('tail3',  'tail2',     0.000, 1.010, -0.298);
+bone('earL',   'head',      0.110, 1.018,  0.480);
+bone('earR',   'head',     -0.110, 1.018,  0.480);
+bone('FLu',    'chest',     0.104, 0.596,  0.220);
+bone('FLl',    'FLu',       0.115, 0.332,  0.178);
+bone('FLp',    'FLl',       0.115, 0.142,  0.206);
+bone('FRu',    'chest',    -0.104, 0.596,  0.220);
+bone('FRl',    'FRu',      -0.115, 0.332,  0.178);
+bone('FRp',    'FRl',      -0.115, 0.142,  0.206);
+bone('BLu',    'root',      0.114, 0.606, -0.296);
+bone('BLl',    'BLu',       0.130, 0.342, -0.346);
+bone('BLp',    'BLl',       0.130, 0.172, -0.244);
+bone('BRu',    'root',     -0.114, 0.606, -0.296);
+bone('BRl',    'BRu',      -0.130, 0.342, -0.346);
+bone('BRp',    'BRl',      -0.130, 0.172, -0.244);
+
+for (const b of bones){
+  const p = b.parent >= 0 ? bones[b.parent].rest : [0,0,0];
+  b.off = [b.rest[0]-p[0], b.rest[1]-p[1], b.rest[2]-p[2]];
+}
+const boneMats = new Float32Array(24*16);
+const tmpA = m4(), tmpB = m4(), tmpC = m4();
+
+function updateSkeleton(){
+  for (let i=0;i<bones.length;i++){
+    const b = bones[i];
+    m4trans(tmpA, b.off[0], b.off[1], b.off[2]);
+    m4mul(b.local, tmpA, m4rotY(tmpB, b.ry));
+    m4mul(b.local, b.local, m4rotX(tmpB, b.rx));
+    m4mul(b.local, b.local, m4rotZ(tmpB, b.rz));
+    if (b.parent >= 0) m4mul(b.world, bones[b.parent].world, b.local);
+    else b.world.set(b.local);
+    // skin = world * inverse(bind)   (bind is a pure translation)
+    m4trans(tmpC, -b.rest[0], -b.rest[1], -b.rest[2]);
+    m4mul(b.skin, b.world, tmpC);
+    boneMats.set(b.skin, i*16);
+  }
+}
+
+/* ============================================================ DOG GEOMETRY = */
+const P = [], Nn = [], C = [], BI = [], BW = [], FUR = [], MK = [], IDX = [];
+
+const COAT   = [0.108, 0.093, 0.083];   // black — the prized Bankhar colour
+const TAN    = [0.236, 0.100, 0.041];   // mahogany points
+const TAN_LT = [0.330, 0.152, 0.062];   // brighter mahogany of the eye spots
+const CREAM  = [0.815, 0.795, 0.760];   // the white chest patch
+
+/* Coat length in metres. A Bankhar carries 7-10 cm of hair in winter, but not
+   evenly: a heavy mane over neck and shoulders, breeches on the thighs, a
+   plumed tail, and short hair on the face and below the hocks. Driving the
+   shell offsets from this is what gives the silhouette its bear-like bulk. */
+let curFur = 0.030;
+const furAt = q => (typeof curFur === 'function' ? curFur(q) : curFur);
+
+function torsoFur(q){
+  const [x, y, z] = q;
+  let f = 0.058;                                                       // the body coat itself
+  f = Math.max(f, lerp(0.058, 0.094, smoothstep(-0.04, 0.24, z)        // mane over the shoulders
+                                     * lerp(0.70, 1.0, smoothstep(0.02, 0.10, Math.abs(x)))));
+  f = Math.max(f, lerp(0.058, 0.076, smoothstep(0.56, 0.44, y)));      // brisket and belly fringe
+  f = Math.max(f, lerp(0.058, 0.070, smoothstep(-0.06, -0.28, z)       // breeches
+                                     * smoothstep(0.42, 0.56, y)
+                                     * smoothstep(0.74, 0.60, y)));
+  return f;
+}
+function neckFur(q){
+  const [x, y, z] = q;
+  const base = lerp(0.116, 0.030, smoothstep(0.26, 0.42, z));
+  const side = lerp(0.58, 1.00, smoothstep(0.02, 0.11, Math.abs(x)));
+  const low  = lerp(0.46, 1.20, smoothstep(0.96, 0.68, y));
+  return base * side * low;
+}
+function headFur(q){ return lerp(0.021, 0.0105, smoothstep(0.42, 0.68, q[2])); }
+function frontLegFur(q){ return lerp(0.009, 0.056, smoothstep(0.16, 0.44, q[1])); }
+function hindLegFur(q){  return lerp(0.009, 0.062, smoothstep(0.16, 0.42, q[1])); }
+
+/* Returns the base coat colour plus how much mahogany and how much white this
+   point carries. The amounts are thresholded later - per fragment on the skin,
+   per hair in the coat - so a marking edge breaks up instead of smearing. */
+function markColor(p){
+  const [x,y,z] = p;
+  let col = COAT.slice();
+  const mixTo = (c, t) => { for (let i=0;i<3;i++) col[i] = lerp(col[i], c[i], clamp(t,0,1)); };
+  let tan = 0, cream = 0;
+  const addTan = t => { tan = Math.max(tan, clamp(t,0,1)); };
+
+  // mahogany points on the lower legs - the black-and-tan of the four-eye dog
+  addTan(smoothstep(0.310, 0.095, y) * 0.90);
+  addTan(smoothstep(0.105, 0.030, y) * 0.55);
+
+  // the muzzle keeps its dark mask; mahogany sits on the cheeks and lower jaw
+  for (const sx of [1,-1]){
+    const cd = Math.hypot((x - sx*0.076)*0.70, (y-0.942)*1.35, (z-0.606)*0.95);
+    addTan(smoothstep(0.050, 0.013, cd) * 0.58);
+  }
+  const jaw = smoothstep(0.580, 0.644, z) * smoothstep(0.936, 0.906, y);
+  mixTo([0.150,0.108,0.084], jaw*0.80);
+
+  // "spectacles" - the lighter ring the standard describes around each eye
+  for (const sx of [1,-1]){
+    const sd = Math.hypot((x - sx*0.086)*0.85, (y-1.012)*0.95, (z-0.554)*1.20);
+    addTan(smoothstep(0.040, 0.026, sd) * 0.45);
+  }
+  // "дөрвөн нүдтэй" - the four-eye spots the herders prize
+  for (const sx of [1,-1]){
+    const d = Math.hypot((x - sx*0.074)*0.95, (y-1.050)*1.10, (z-0.534)*0.95);
+    addTan(smoothstep(0.033, 0.010, d) * 1.0);
+  }
+  // the clearly defined white chest patch
+  const bd = Math.hypot(x*1.30, (y-0.500)*0.90, (z-0.330)*0.70);
+  cream = clamp(smoothstep(0.130, 0.062, bd) * 0.95, 0, 1);
+  // the mane is grizzled, so it separates from the shoulder
+  const ruff = smoothstep(0.180, 0.290, z) * smoothstep(0.480, 0.400, z)
+             * smoothstep(0.570, 0.690, y);
+  mixTo([0.158,0.142,0.132], ruff*0.75);
+  // ear leather takes a warmer tone than the skull
+  const ed = Math.min(Math.hypot(x-0.136,(y-0.964)*0.85,(z-0.502)*1.5),
+                      Math.hypot(x+0.136,(y-0.964)*0.85,(z-0.502)*1.5));
+  mixTo([0.230,0.163,0.118], smoothstep(0.082, 0.018, ed) * 0.95);
+  // belly warms slightly
+  mixTo([0.158,0.124,0.102], smoothstep(0.50,0.39,y) * smoothstep(0.22,-0.10,Math.abs(z)) * 0.40);
+  // mahogany under the tail, as the standard describes
+  const td = Math.hypot(x, (y-0.870)*0.8, (z+0.230)*0.8);
+  addTan(smoothstep(0.115, 0.035, td) * 0.60);
+
+  return { col, tan, cream };
+}
+
+/* the same threshold the shader uses, so coat and skin agree at a boundary */
+function markGrain(x, y, z){
+  return vnoise(x*88 + 7.3, z*88 + 2.1) * 0.55
+       + vnoise(y*97 + 4.7, x*97 + 9.4) * 0.45;
+}
+function markedColor(p){
+  const m = markColor(p);
+  const g = markGrain(p[0], p[1], p[2]) - 0.5;
+  const c = m.col.slice();
+  const ta = smoothstep(0.44, 0.56, m.tan   + g*0.42);
+  const ca = smoothstep(0.45, 0.55, m.cream + g*0.36);
+  for (let i=0;i<3;i++){
+    c[i] = lerp(c[i], TAN[i], ta);
+    c[i] = lerp(c[i], CREAM[i], ca);
+  }
+  return c;
+}
+
+function pushVert(px,py,pz, bi, bw, shine, colOverride){
+  P.push(px,py,pz);
+  Nn.push(0,0,0);
+  let c, mt = 0, mc = 0;
+  if (colOverride) c = colOverride;
+  else { const m = markColor([px,py,pz]); c = m.col; mt = m.tan; mc = m.cream; }
+  C.push(c[0], c[1], c[2], shine || 0);
+  MK.push(mt, mc);
+  BI.push(bi[0]|0, bi[1]|0, bi[2]|0, bi[3]|0);
+  BW.push(bw[0], bw[1], bw[2], bw[3]);
+  FUR.push(shine ? 0 : furAt([px,py,pz]));
+}
+
+function norm3(v){ const l = Math.hypot(v[0],v[1],v[2])||1; return [v[0]/l,v[1]/l,v[2]/l]; }
+function cross3(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+
+/**
+ * Loft a tube along a joint chain.
+ * joints : [[x,y,z], ...]
+ * radii  : [[rx,ry], ...] per joint
+ * boneOf : [boneIndex, ...] per segment-start joint
+ */
+function loft(joints, radii, boneOf, opts){
+  opts = opts || {};
+  curFur = opts.fur !== undefined ? opts.fur : 0.030;
+  const seg = opts.seg || 16;
+  const sub = opts.sub || 3;
+  const upRef = opts.upRef || [0,1,0];
+  const capA = opts.capStart !== false;
+  const capB = opts.capEnd !== false;
+  const shine = opts.shine || 0;
+  const colOverride = opts.color || null;
+  void colOverride;
+  const bz = 0.34;                       // blend zone near joints
+  const nseg = joints.length - 1;
+
+  const rings = [];
+  for (let k=0;k<nseg;k++){
+    const steps = (k === nseg-1) ? sub+1 : sub;
+    for (let s=0;s<steps;s++){
+      const t = s/sub;
+      const p = [ lerp(joints[k][0],joints[k+1][0],t),
+                  lerp(joints[k][1],joints[k+1][1],t),
+                  lerp(joints[k][2],joints[k+1][2],t) ];
+      const r = [ lerp(radii[k][0],radii[k+1][0],t), lerp(radii[k][1],radii[k+1][1],t) ];
+      let bi = [boneOf[k],boneOf[k],boneOf[k],boneOf[k]], bw = [1,0,0,0];
+      if (t < bz && k > 0){
+        const a = 0.5*(1 - t/bz);
+        bi = [boneOf[k], boneOf[k-1], 0, 0]; bw = [1-a, a, 0, 0];
+      } else if (t > 1-bz && k < nseg-1){
+        const a = 0.5*(1 - (1-t)/bz);
+        bi = [boneOf[k], boneOf[k+1], 0, 0]; bw = [1-a, a, 0, 0];
+      }
+      // caller may force weights on specific joints (e.g. leg roots)
+      if (opts.forceW && opts.forceW[k] && t < 0.5){
+        const f = opts.forceW[k], a = (0.5-t)*2 * f.w;
+        bi = [boneOf[k], f.b, 0, 0]; bw = [1-a, a, 0, 0];
+      }
+      rings.push({p, r, bi, bw, t: (k+t)/nseg});
+    }
+  }
+
+  // frames
+  const startIdx = P.length/3;
+  const ringStart = [];
+  for (let i=0;i<rings.length;i++){
+    const a = rings[Math.max(0,i-1)].p, b = rings[Math.min(rings.length-1,i+1)].p;
+    let tan = norm3([b[0]-a[0], b[1]-a[1], b[2]-a[2]]);
+    if (!isFinite(tan[0])) tan = [0,0,1];
+    let right = cross3(upRef, tan);
+    if (Math.hypot(right[0],right[1],right[2]) < 1e-4) right = cross3([1,0,0], tan);
+    right = norm3(right);
+    const up = norm3(cross3(tan, right));
+    rings[i].tan = tan; rings[i].right = right; rings[i].up = up;
+  }
+
+  const shape = opts.shape || null;
+  function emitRing(r, scale, along){
+    ringStart.push(P.length/3);
+    const c = [ r.p[0] + r.tan[0]*along, r.p[1] + r.tan[1]*along, r.p[2] + r.tan[2]*along ];
+    for (let s=0;s<seg;s++){
+      const th = s/seg*T;
+      const m = shape ? shape(th, r.t) : 1;
+      const cs = Math.cos(th)*r.r[0]*scale*m, sn = Math.sin(th)*r.r[1]*scale*m;
+      pushVert(c[0] + r.right[0]*cs + r.up[0]*sn,
+               c[1] + r.right[1]*cs + r.up[1]*sn,
+               c[2] + r.right[2]*cs + r.up[2]*sn,
+               r.bi, r.bw, shine, colOverride);
+    }
+  }
+
+  // capLen < 1 gives a shallow cap: used where an end is buried inside another
+  // part and a full hemisphere would push out through its surface
+  const capSteps = 4;
+  const capLen = opts.capLen !== undefined ? opts.capLen : 0.95;
+  if (capA){
+    const r0 = rings[0];
+    for (let i=capSteps;i>=1;i--){
+      const u = i/(capSteps+0.06);
+      emitRing(r0, Math.sqrt(Math.max(0,1-u*u)), -u*Math.max(r0.r[0],r0.r[1])*capLen);
+    }
+  }
+  for (const r of rings) emitRing(r, 1, 0);
+  if (capB){
+    const rN = rings[rings.length-1];
+    for (let i=1;i<=capSteps;i++){
+      const u = i/(capSteps+0.06);
+      emitRing(rN, Math.sqrt(Math.max(0,1-u*u)), u*Math.max(rN.r[0],rN.r[1])*capLen);
+    }
+  }
+
+  for (let i=0;i<ringStart.length-1;i++){
+    const a = ringStart[i], b = ringStart[i+1];
+    for (let s=0;s<seg;s++){
+      const s2 = (s+1)%seg;
+      IDX.push(a+s, b+s, a+s2);
+      IDX.push(a+s2, b+s, b+s2);
+    }
+  }
+  // seal the tips with a fan
+  if (capA){
+    const a = ringStart[0];
+    for (let s=1;s<seg-1;s++) IDX.push(a, a+s+1, a+s);
+  }
+  if (capB){
+    const a = ringStart[ringStart.length-1];
+    for (let s=1;s<seg-1;s++) IDX.push(a, a+s, a+s+1);
+  }
+  return startIdx;
+}
+
+function sphere(cx,cy,cz, rx,ry,rz, boneIdx, color, shine, seg, fur){
+  seg = seg || 12;
+  curFur = fur || 0;
+  const rings = seg, base = P.length/3;
+  for (let j=0;j<=rings;j++){
+    const v = j/rings*Math.PI, sv = Math.sin(v), cv = Math.cos(v);
+    for (let i=0;i<seg;i++){
+      const u = i/seg*T;
+      pushVert(cx + rx*sv*Math.cos(u), cy + ry*cv, cz + rz*sv*Math.sin(u),
+               [boneIdx,0,0,0], [1,0,0,0], shine, color || null);
+    }
+  }
+  for (let j=0;j<rings;j++)
+    for (let i=0;i<seg;i++){
+      const a = base + j*seg + i, b = base + j*seg + (i+1)%seg;
+      const c = a + seg, d = b + seg;
+      IDX.push(a,c,b); IDX.push(b,c,d);
+    }
+}
+
+/* Parts are tracked so each one can have its winding checked independently. */
+const parts = [];
+function part(fn){
+  const v0 = P.length/3, i0 = IDX.length;
+  fn();
+  parts.push({ v0, v1: P.length/3, i0, i1: IDX.length });
+}
+
+/* ---- torso: broad level topline over a deep heart-shaped rib cage -------- */
+part(() => loft(
+  [[0,0.650,-0.456],[0,0.642,-0.392],[0,0.632,-0.308],[0,0.628,-0.206],
+   [0,0.622,-0.094],[0,0.614, 0.018],[0,0.608, 0.130],[0,0.608, 0.228],
+   [0,0.620, 0.306],[0,0.626, 0.368]],
+  [[0.092,0.100],[0.134,0.152],[0.148,0.184],[0.156,0.202],
+   [0.160,0.216],[0.164,0.228],[0.168,0.240],[0.166,0.242],
+   [0.158,0.228],[0.132,0.200]],
+  [B.root,B.root,B.root,B.spine,B.spine,B.spine,B.chest,B.chest,B.chest,B.chest],
+  { seg:22, sub:3, fur: torsoFur }
+));
+
+/* ---- neck: powerful, arched and set low, buried in the mane ------------- */
+part(() => loft(
+  [[0,0.664,0.284],[0,0.772,0.318],[0,0.878,0.352],[0,0.948,0.382],[0,0.982,0.402]],
+  [[0.158,0.192],[0.142,0.176],[0.122,0.148],[0.106,0.126],[0.096,0.112]],
+  [B.chest,B.neck,B.neck,B.head,B.head],
+  { seg:18, sub:3, capStart:false, capEnd:false, fur: neckFur }
+));
+
+/* ---- head ---------------------------------------------------------------
+   Wide cranium with a deep frontal furrow, gradual stop, and a muzzle that is
+   trapezoidal from above and almost blunt at the tip. 34 cm long on an 85 cm
+   dog, which is the ratio a bear-headed guardian actually carries. */
+const headShape = (th, u) => {
+  const c = Math.abs(Math.cos(th)), sn = Math.sin(th);
+  // the cross-section squares off toward the muzzle
+  const n = lerp(2.0, 2.7, smoothstep(0.40, 0.78, u));
+  let m = Math.pow(Math.pow(c, n) + Math.pow(Math.abs(sn), n), -1/n);
+  // frontal furrow: a groove along the top of the skull
+  const groove = Math.exp(-Math.pow((th - Math.PI/2) / 0.26, 2));
+  m *= 1 - 0.085 * groove * smoothstep(0.62, 0.28, u);
+  // cheekbones, well developed but not protruding
+  m *= 1 + 0.060 * Math.pow(1 - Math.abs(sn), 2)
+             * smoothstep(0.10, 0.30, u) * smoothstep(0.72, 0.44, u);
+  // the sinus swelling that gives the muzzle its blocky top
+  m *= 1 + 0.028 * Math.max(0, sn) * smoothstep(0.52, 0.78, u);
+  return m;
+};
+part(() => loft(
+  [[0,0.972,0.398],[0,0.986,0.470],[0,0.978,0.545],[0,0.956,0.590],
+   [0,0.944,0.632],[0,0.940,0.676],[0,0.938,0.712]],
+  [[0.092,0.106],[0.107,0.116],[0.102,0.108],[0.082,0.094],
+   [0.070,0.080],[0.065,0.073],[0.060,0.067]],
+  [B.head,B.head,B.head,B.head,B.head,B.head,B.head],
+  { seg:26, sub:4, fur: headFur, shape: headShape }
+));
+/* massive lower jaw and chin */
+part(() => sphere(0, 0.906, 0.630, 0.064, 0.038, 0.084, B.head, null, 0, 16, 0.013));
+part(() => sphere(0, 0.916, 0.686, 0.035, 0.025, 0.024, B.head, null, 0, 12, 0.010));
+/* brow ridges over the eyes */
+part(() => sphere( 0.078, 1.036, 0.532, 0.036, 0.021, 0.036, B.head, null, 0, 12, 0.016));
+part(() => sphere(-0.078, 1.036, 0.532, 0.036, 0.021, 0.036, B.head, null, 0, 12, 0.016));
+/* tight lips, folding at the corner */
+function lip(sx){
+  loft(
+    [[sx*0.074,0.928,0.572],[sx*0.066,0.918,0.620],[sx*0.052,0.912,0.664],
+     [sx*0.031,0.912,0.698],[sx*0.010,0.914,0.722]],
+    [[0.016,0.013],[0.015,0.012],[0.014,0.011],[0.012,0.010],[0.009,0.008]],
+    [B.head,B.head,B.head,B.head,B.head],
+    { seg:9, sub:2, fur:0.005, color:[0.052,0.044,0.043] }
+  );
+}
+part(() => lip( 1));
+part(() => lip(-1));
+
+/* ---- legs: heavy bone, small compact feet ------------------------------- */
+function frontLeg(sx, bu, bl, bp){
+  loft(
+    [[sx*0.096,0.592,0.220],[sx*0.115,0.332,0.178],[sx*0.115,0.142,0.206],
+     [sx*0.117,0.046,0.224],[sx*0.119,0.024,0.264]],
+    [[0.090,0.104],[0.072,0.084],[0.050,0.058],[0.049,0.047],[0.049,0.033]],
+    [bu,bl,bp,bp,bp],
+    { seg:13, sub:3, capLen:0.20, fur: frontLegFur, forceW:{0:{b:B.chest,w:0.85}} }
+  );
+}
+function hindLeg(sx, bu, bl, bp){
+  loft(
+    [[sx*0.108,0.606,-0.296],[sx*0.130,0.342,-0.346],[sx*0.130,0.172,-0.244],
+     [sx*0.130,0.046,-0.260],[sx*0.132,0.024,-0.298]],
+    [[0.120,0.150],[0.086,0.108],[0.050,0.058],[0.049,0.047],[0.049,0.033]],
+    [bu,bl,bp,bp,bp],
+    { seg:13, sub:3, capLen:0.20, fur: hindLegFur, forceW:{0:{b:B.root,w:0.85}} }
+  );
+}
+part(() => frontLeg( 1, B.FLu, B.FLl, B.FLp));
+part(() => frontLeg(-1, B.FRu, B.FRl, B.FRp));
+part(() => hindLeg ( 1, B.BLu, B.BLl, B.BLp));
+part(() => hindLeg (-1, B.BRu, B.BRl, B.BRp));
+
+/* ---- tail: thick and plumed, curled tight over the back ----------------- */
+part(() => loft(
+  [[0,0.672,-0.356],[0,0.812,-0.424],[0,0.948,-0.406],[0,1.010,-0.298],
+   [0,0.986,-0.196],[0,0.902,-0.156]],
+  [[0.052,0.056],[0.056,0.060],[0.053,0.056],[0.046,0.048],
+   [0.036,0.037],[0.021,0.021]],
+  [B.tail0,B.tail0,B.tail1,B.tail2,B.tail3,B.tail3],
+  { seg:12, sub:3, capLen:0.22, fur: 0.062 }
+));
+
+/* ---- ears: small triangular drops, set high, lying against the skull ----- */
+function ear(sx, b){
+  loft(
+    [[sx*0.110,1.018,0.480],[sx*0.130,0.972,0.498],[sx*0.142,0.928,0.516],[sx*0.146,0.902,0.524]],
+    [[0.050,0.018],[0.058,0.016],[0.045,0.012],[0.015,0.008]],
+    [b,b,b,b],
+    { seg:12, sub:3, upRef:[1,0,0], capLen:0.25, fur:0.020, forceW:{0:{b:B.head,w:0.9}} }
+  );
+}
+part(() => ear( 1, B.earL));
+part(() => ear(-1, B.earR));
+
+/* ---- face details -------------------------------------------------------- */
+/* small, neat, triangular nose with open nostrils */
+part(() => sphere(0, 0.940, 0.730, 0.036, 0.031, 0.023, B.head, [0.055,0.047,0.049], 1.0, 16));
+part(() => sphere( 0.0165, 0.9345, 0.7440, 0.0105, 0.0094, 0.0080, B.head, [0.012,0.010,0.011], 0.0, 8));
+part(() => sphere(-0.0165, 0.9345, 0.7440, 0.0105, 0.0094, 0.0080, B.head, [0.012,0.010,0.011], 0.0, 8));
+
+/* eyes: oval, set obliquely and wide apart, with a real iris and pupil */
+function eyeball(sx){
+  const cx = sx*0.088, cy = 1.010, cz = 0.558;
+  const rx = 0.0278, ry = 0.0256, rz = 0.0244;
+  const fx = sx*0.46, fy = 0.12, fz = 0.88;
+  const fl = Math.hypot(fx, fy, fz);
+  const f = [fx/fl, fy/fl, fz/fl];
+  // a frame around the gaze axis, so the iris can carry radial fibres
+  let rt = cross3([0,1,0], f); rt = norm3(rt);
+  const up2 = cross3(f, rt);
+  const seg = 28, rings = 26, base = P.length/3;
+  curFur = 0;
+  for (let j=0;j<=rings;j++){
+    const v = j/rings*Math.PI, sv = Math.sin(v), cv = Math.cos(v);
+    for (let i=0;i<seg;i++){
+      const u = i/seg*T;
+      const dx = sv*Math.cos(u), dy = cv, dz = sv*Math.sin(u);
+      const k = dx*f[0] + dy*f[1] + dz*f[2];
+      let col;
+      if (k > 0.905)     col = [0.014,0.012,0.012];                    // pupil
+      else if (k > 0.575) {                                            // iris
+        const t = clamp((k-0.575)/0.330, 0, 1);
+        // fibres running out from the pupil
+        const a = Math.atan2(dx*up2[0]+dy*up2[1]+dz*up2[2],
+                             dx*rt[0] +dy*rt[1] +dz*rt[2]);
+        const fib = 0.5 + 0.5*Math.sin(a*34 + vnoise(a*7+3, t*11)*7.5);
+        const shade = (0.92 + 0.30*fib) * (0.90 + 0.22*vnoise(a*13+9, t*19+2));
+        col = [lerp(0.400,0.150,t)*shade, lerp(0.224,0.074,t)*shade, lerp(0.082,0.028,t)*shade];
+        // limbal ring: the dark band at the outer edge of the iris
+        const limb = smoothstep(0.72, 0.60, k);
+        for (let q=0;q<3;q++) col[q] = lerp(col[q], 0.038, limb*0.45);
+      } else col = [0.120,0.104,0.098];                                // little sclera shows
+      pushVert(cx + rx*dx, cy + ry*dy, cz + rz*dz, [B.head,0,0,0], [1,0,0,0], 1.0, col);
+    }
+  }
+  for (let j=0;j<rings;j++)
+    for (let i=0;i<seg;i++){
+      const a = base + j*seg + i, b = base + j*seg + (i+1)%seg;
+      IDX.push(a, a+seg, b); IDX.push(b, a+seg, b+seg);
+    }
+}
+part(() => eyeball( 1));
+part(() => eyeball(-1));
+/* the raised whisker pads either side of the muzzle */
+part(() => sphere( 0.050, 0.936, 0.688, 0.030, 0.025, 0.034, B.head, null, 0, 12, 0.009));
+part(() => sphere(-0.050, 0.936, 0.688, 0.030, 0.025, 0.034, B.head, null, 0, 12, 0.009));
+/* a lower lid, so the eye sits in a socket instead of on the skull */
+part(() => sphere( 0.086, 0.9880, 0.5590, 0.0310, 0.0135, 0.0155, B.head, [0.052,0.042,0.038], 0.1, 12, 0.006));
+part(() => sphere(-0.086, 0.9880, 0.5590, 0.0310, 0.0135, 0.0155, B.head, [0.052,0.042,0.038], 0.1, 12, 0.006));
+/* the ear canal, a dark note where the leather meets the skull */
+part(() => sphere( 0.098, 1.008, 0.490, 0.019, 0.023, 0.015, B.head, [0.030,0.023,0.021], 0.0, 10, 0.004));
+part(() => sphere(-0.098, 1.008, 0.490, 0.019, 0.023, 0.015, B.head, [0.030,0.023,0.021], 0.0, 10, 0.004));
+
+/* dry, close-fitting eyelids read as a dark rim around the eye */
+part(() => sphere( 0.088, 1.0085, 0.5545, 0.0345, 0.0322, 0.0150, B.head, [0.030,0.025,0.024], 0.2, 16, 0.004));
+part(() => sphere(-0.088, 1.0085, 0.5545, 0.0345, 0.0322, 0.0150, B.head, [0.030,0.025,0.024], 0.2, 16, 0.004));
+
+/* ---- head scale ----------------------------------------------------------
+   A Bankhar is "bavgar" — bear-like — and the head has to carry that against a
+   body wearing 10 cm of coat. Scaling by skin weight keeps the neck junction
+   continuous instead of leaving a step where the skull meets the ruff. */
+(function(){
+  const k = 1.17, ox = 0, oy = 0.952, oz = 0.398;
+  for (let v=0; v<P.length/3; v++){
+    let w = 0;
+    for (let j=0;j<4;j++){
+      const b = BI[v*4+j];
+      if (b === B.head || b === B.earL || b === B.earR) w += BW[v*4+j];
+    }
+    if (w < 0.001) continue;
+    const sc = 1 + (k-1)*w;
+    P[v*3]   = ox + (P[v*3]  -ox)*sc;
+    P[v*3+1] = oy + (P[v*3+1]-oy)*sc;
+    P[v*3+2] = oz + (P[v*3+2]-oz)*sc;
+    FUR[v]  *= sc;
+  }
+  for (const nm of ['head','earL','earR']){
+    const b = bones[B[nm]];
+    b.rest = [ox + (b.rest[0]-ox)*k, oy + (b.rest[1]-oy)*k, oz + (b.rest[2]-oz)*k];
+  }
+  for (const b of bones){
+    const par = b.parent >= 0 ? bones[b.parent].rest : [0,0,0];
+    b.off = [b.rest[0]-par[0], b.rest[1]-par[1], b.rest[2]-par[2]];
+  }
+})();
+
+/* ---- normals (orientation resolved per part) ---------------------------- */
+(function(){
+  for (let i=0;i<IDX.length;i+=3){
+    const a = IDX[i]*3, b = IDX[i+1]*3, c = IDX[i+2]*3;
+    const ux = P[b]-P[a], uy = P[b+1]-P[a+1], uz = P[b+2]-P[a+2];
+    const vx = P[c]-P[a], vy = P[c+1]-P[a+1], vz = P[c+2]-P[a+2];
+    const nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
+    Nn[a]+=nx; Nn[a+1]+=ny; Nn[a+2]+=nz;
+    Nn[b]+=nx; Nn[b+1]+=ny; Nn[b+2]+=nz;
+    Nn[c]+=nx; Nn[c+1]+=ny; Nn[c+2]+=nz;
+  }
+  for (const pt of parts){
+    // centroid of this part
+    let cx=0, cy=0, cz=0;
+    const n = pt.v1 - pt.v0;
+    for (let v=pt.v0; v<pt.v1; v++){ cx+=P[v*3]; cy+=P[v*3+1]; cz+=P[v*3+2]; }
+    cx/=n; cy/=n; cz/=n;
+    let acc = 0;
+    for (let v=pt.v0; v<pt.v1; v++)
+      acc += (P[v*3]-cx)*Nn[v*3] + (P[v*3+1]-cy)*Nn[v*3+1] + (P[v*3+2]-cz)*Nn[v*3+2];
+    if (acc < 0){
+      for (let v=pt.v0; v<pt.v1; v++){ Nn[v*3]*=-1; Nn[v*3+1]*=-1; Nn[v*3+2]*=-1; }
+      for (let i=pt.i0; i<pt.i1; i+=3){ const t = IDX[i+1]; IDX[i+1] = IDX[i+2]; IDX[i+2] = t; }
+    }
+  }
+  for (let i=0;i<Nn.length;i+=3){
+    const l = Math.hypot(Nn[i],Nn[i+1],Nn[i+2]) || 1;
+    Nn[i] /= l; Nn[i+1] /= l; Nn[i+2] /= l;
+  }
+})();
+
+const dogIndexCount = IDX.length;
+const dogVao = gl.createVertexArray();
+const dogDepthVao = gl.createVertexArray();
+{
+  const bp  = buffer(new Float32Array(P));
+  const bn  = buffer(new Float32Array(Nn));
+  const bc  = buffer(new Float32Array(C));
+  const bi  = buffer(new Float32Array(BI));
+  const bw  = buffer(new Float32Array(BW));
+  const bf  = buffer(new Float32Array(FUR));
+  const bm  = buffer(new Float32Array(MK));
+  const bidx= buffer(new Uint32Array(IDX), gl.ELEMENT_ARRAY_BUFFER);
+
+  gl.bindVertexArray(dogVao);
+  attrib(dogProg,'aPos',bp,3); attrib(dogProg,'aNor',bn,3); attrib(dogProg,'aCol',bc,4);
+  attrib(dogProg,'aBi',bi,4);  attrib(dogProg,'aBw',bw,4);  attrib(dogProg,'aFur',bf,1);
+  attrib(dogProg,'aMark',bm,2);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bidx);
+
+  gl.bindVertexArray(dogDepthVao);
+  attrib(depthProg,'aPos',bp,3); attrib(depthProg,'aNor',bn,3); attrib(depthProg,'aCol',bc,4);
+  attrib(depthProg,'aBi',bi,4);  attrib(depthProg,'aBw',bw,4); attrib(depthProg,'aFur',bf,1);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bidx);
+  gl.bindVertexArray(null);
+}
+
+/* ---- grow the coat: sample follicles over the skin, denser where the
+       coat is long, and inherit that vertex's skinning ---------------------- */
+let strandCount = 0;
+const strandVao = gl.createVertexArray();
+(function(){
+  const TARGET = 96000;
+  const triA = [], cum = [];
+  let total = 0;
+  for (let i=0;i<IDX.length;i+=3){
+    const a = IDX[i], b = IDX[i+1], c = IDX[i+2];
+    const fur = (FUR[a] + FUR[b] + FUR[c]) / 3;
+    if (fur < 0.0035) continue;
+    if (C[a*4+3] > 0.4) continue;                       // no hair on nose or eyes
+    const ax=P[a*3],ay=P[a*3+1],az=P[a*3+2];
+    const ux=P[b*3]-ax, uy=P[b*3+1]-ay, uz=P[b*3+2]-az;
+    const vx=P[c*3]-ax, vy=P[c*3+1]-ay, vz=P[c*3+2]-az;
+    const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    const area = 0.5*Math.hypot(nx,ny,nz);
+    total += area * (1.20 + fur*22) * (fur < 0.020 ? 3.0 : 1.0);
+    triA.push(a,b,c); cum.push(total);
+  }
+  const N = TARGET, NX = TARGET + 80;
+  const root = new Float32Array(NX*3), nrm = new Float32Array(NX*3);
+  const col  = new Float32Array(NX*3), par = new Float32Array(NX*4);
+  const bi   = new Float32Array(NX*4), bw  = new Float32Array(NX*4);
+  let seed = 20240826;
+  const rnd = () => { seed = (seed*1664525 + 1013904223) >>> 0; return seed/4294967296; };
+
+  let k = 0;
+  // ---- vibrissae: long stiff hairs on the whisker pads and over the brows --
+  (function(){
+    let hz0 = 9, hz1 = -9, hax = 0, hyMid = 0, hn = 0;
+    const isHead = v => {
+      let w = 0;
+      for (let j=0;j<4;j++) if (BI[v*4+j] === B.head) w += BW[v*4+j];
+      return w > 0.98 && C[v*4+3] < 0.4;
+    };
+    for (let v=0; v<P.length/3; v++){
+      if (!isHead(v)) continue;
+      hz0 = Math.min(hz0, P[v*3+2]); hz1 = Math.max(hz1, P[v*3+2]);
+      hax = Math.max(hax, Math.abs(P[v*3]));
+      hyMid += P[v*3+1]; hn++;
+    }
+    if (!hn) return;
+    hyMid /= hn;
+    const HL = Math.max(hz1 - hz0, 1e-3);
+    const pads = [], brows = [];
+    for (let v=0; v<P.length/3; v++){
+      if (!isHead(v)) continue;
+      const x = P[v*3], y = P[v*3+1], z = P[v*3+2], ax = Math.abs(x);
+      const zf = (z - hz0)/HL;
+      if (zf > 0.74 && zf < 0.96 && ax > 0.48*hax && y < hyMid + 0.010) pads.push(v);
+      else if (zf > 0.42 && zf < 0.55 && ax > 0.40*hax && ax < 0.72*hax
+               && y > hyMid + 0.075) brows.push(v);
+    }
+    const take = (list, want, lenA, lenB) => {
+      if (!list.length) return;
+      const step = Math.max(1, Math.floor(list.length/want));
+      for (let i=0; i<list.length && k < NX; i += step){
+        const v = list[i];
+        root[k*3]=P[v*3]; root[k*3+1]=P[v*3+1]; root[k*3+2]=P[v*3+2];
+        let nx=Nn[v*3], ny=Nn[v*3+1], nz=Nn[v*3+2];
+        const nl = Math.hypot(nx,ny,nz) || 1;
+        nrm[k*3]=nx/nl; nrm[k*3+1]=ny/nl; nrm[k*3+2]=nz/nl;
+        col[k*3]=0.40; col[k*3+1]=0.38; col[k*3+2]=0.35;
+        par[k*4]   = lenA + (lenB-lenA)*rnd();
+        par[k*4+1] = 2 + rnd()*0.999;          // >1 flags a vibrissa
+        par[k*4+2] = (rnd()-0.5)*0.10;
+        par[k*4+3] = (rnd()-0.5)*0.10;
+        for (let j=0;j<4;j++){ bi[k*4+j]=BI[v*4+j]; bw[k*4+j]=BW[v*4+j]; }
+        k++;
+      }
+    };
+    take(pads,  24, 0.080, 0.140);
+    take(brows,  6, 0.050, 0.078);
+  })();
+
+  for (let i=0;i<N && k<NX;i++){
+    // pick a triangle in proportion to its share of the coat
+    const r = rnd()*total;
+    let lo = 0, hi = cum.length-1;
+    while (lo < hi){ const m = (lo+hi)>>1; if (cum[m] < r) lo = m+1; else hi = m; }
+    const a = triA[lo*3], b = triA[lo*3+1], c = triA[lo*3+2];
+
+    let u = rnd(), v = rnd();
+    if (u + v > 1){ u = 1-u; v = 1-v; }
+    const w0 = 1-u-v, w1 = u, w2 = v;
+
+    const px = P[a*3]*w0 + P[b*3]*w1 + P[c*3]*w2;
+    const py = P[a*3+1]*w0 + P[b*3+1]*w1 + P[c*3+1]*w2;
+    const pz = P[a*3+2]*w0 + P[b*3+2]*w1 + P[c*3+2]*w2;
+    let nx = Nn[a*3]*w0 + Nn[b*3]*w1 + Nn[c*3]*w2;
+    let ny = Nn[a*3+1]*w0 + Nn[b*3+1]*w1 + Nn[c*3+1]*w2;
+    let nz = Nn[a*3+2]*w0 + Nn[b*3+2]*w1 + Nn[c*3+2]*w2;
+    const nl = Math.hypot(nx,ny,nz) || 1; nx/=nl; ny/=nl; nz/=nl;
+    const fur = FUR[a]*w0 + FUR[b]*w1 + FUR[c]*w2;
+
+    root[k*3]=px; root[k*3+1]=py; root[k*3+2]=pz;
+    nrm[k*3]=nx;  nrm[k*3+1]=ny;  nrm[k*3+2]=nz;
+    const hc = markedColor([px, py, pz]);
+    col[k*3] = hc[0]; col[k*3+1] = hc[1]; col[k*3+2] = hc[2];
+
+    // hairs gather into tufts: neighbours share a clump direction
+    const cl = 1.05;
+    par[k*4]   = fur * (0.60 + 0.62*rnd());
+    par[k*4+1] = rnd();
+    par[k*4+2] = (vnoise(px*11 + 11, pz*11 + py*8) - 0.5) * cl;
+    par[k*4+3] = (vnoise(pz*11 + 57, px*11 + py*9) - 0.5) * cl;
+
+    // take the skinning of whichever corner this follicle sits closest to
+    const src = (w0 >= w1 && w0 >= w2) ? a : (w1 >= w2 ? b : c);
+    for (let j=0;j<4;j++){ bi[k*4+j] = BI[src*4+j]; bw[k*4+j] = BW[src*4+j]; }
+    k++;
+  }
+  strandCount = k;
+
+  gl.bindVertexArray(strandVao);
+  attrib(furProg,'aRoot', buffer(root), 3, gl.FLOAT, 1);
+  attrib(furProg,'aRNrm', buffer(nrm),  3, gl.FLOAT, 1);
+  attrib(furProg,'aRCol', buffer(col),  3, gl.FLOAT, 1);
+  attrib(furProg,'aRPar', buffer(par),  4, gl.FLOAT, 1);
+  attrib(furProg,'aRBi',  buffer(bi),   4, gl.FLOAT, 1);
+  attrib(furProg,'aRBw',  buffer(bw),   4, gl.FLOAT, 1);
+  gl.bindVertexArray(null);
+})();
+
+/* ---- the outermost vertices, for ground clearance while rolling --------- */
+const hullIdx = (function(){
+  const N = 96, set = new Set();
+  for (let i=0;i<N;i++){
+    const dy = 1 - 2*(i + 0.5)/N;
+    const r  = Math.sqrt(Math.max(0, 1 - dy*dy));
+    const th = i * 2.399963229728653;                 // golden angle
+    const dx = r*Math.cos(th), dz = r*Math.sin(th);
+    let best = -1e9, bi = 0;
+    for (let v=0; v<P.length/3; v++){
+      const pr = P[v*3]*dx + P[v*3+1]*dy + P[v*3+2]*dz;
+      if (pr > best){ best = pr; bi = v; }
+    }
+    set.add(bi);
+  }
+  return Array.from(set);
+})();
+
+/* ================================================================== GAITS = */
+// phase order: [FL, FR, BL, BR]
+const GAITS = {
+  idle: {
+    stride: 1.00, duty: 0.70, phases:[0,0,0,0],
+    reachF:0, pushF:0, reachH:0, pushH:0,
+    swingF:0, stanceF:0, swingH:0, stanceH:0,
+    bobAmp:0, bobHarm:2, pitchAmp:0, archAmp:0, rollAmp:0, yawAmp:0
+  },
+  walk: {
+    stride: 1.15, duty: 0.63, phases:[0.25, 0.75, 0.00, 0.50],
+    reachF:0.34, pushF:0.30, reachH:0.32, pushH:0.34,
+    swingF:0.86, stanceF:0.13, swingH:0.92, stanceH:0.24,
+    bobAmp:0.012, bobHarm:2, pitchAmp:0.020, archAmp:0.018, rollAmp:0.020, yawAmp:0.026
+  },
+  trot: {
+    stride: 2.05, duty: 0.44, phases:[0.00, 0.50, 0.50, 0.00],
+    reachF:0.50, pushF:0.44, reachH:0.46, pushH:0.50,
+    swingF:1.15, stanceF:0.16, swingH:1.20, stanceH:0.32,
+    bobAmp:0.034, bobHarm:2, pitchAmp:0.032, archAmp:0.030, rollAmp:0.026, yawAmp:0.020
+  },
+  gallop: {
+    stride: 3.70, duty: 0.33, phases:[0.00, 0.11, 0.52, 0.63],
+    reachF:0.78, pushF:0.62, reachH:0.72, pushH:0.86,
+    swingF:1.55, stanceF:0.26, swingH:1.62, stanceH:0.52,
+    bobAmp:0.058, bobHarm:1, pitchAmp:0.128, archAmp:0.250, rollAmp:0.018, yawAmp:0.010
+  }
+};
+const GAIT_KEYS = ['reachF','pushF','reachH','pushH','swingF','stanceF','swingH','stanceH',
+                   'bobAmp','pitchAmp','archAmp','rollAmp','yawAmp','duty','stride'];
+const gaitMix = { phases:[0,0,0,0] };
+function blendGaits(a, b, t){
+  for (const k of GAIT_KEYS) gaitMix[k] = lerp(a[k], b[k], t);
+  gaitMix.bobHarm = t < 0.5 ? a.bobHarm : b.bobHarm;
+  // phases are blended on the shortest arc so the transition doesn't stutter
+  for (let i=0;i<4;i++){
+    let pa = a.phases[i], pb = b.phases[i];
+    let d = pb - pa;
+    if (d >  0.5) d -= 1;
+    if (d < -0.5) d += 1;
+    gaitMix.phases[i] = (pa + d*t + 1) % 1;
+  }
+  return gaitMix;
+}
+
+// returns [upperAngle, lowerFlex] for one limb
+function limbCurve(u, g, front){
+  const S = g.duty;
+  const reach = front ? g.reachF : g.reachH;
+  const push  = front ? g.pushF  : g.pushH;
+  const swingFlex  = front ? g.swingF  : g.swingH;
+  const stanceFlex = front ? g.stanceF : g.stanceH;
+  let up, lo;
+  if (u < S){
+    const k = u/S;
+    const e = k*k*(3-2*k)*0.35 + k*0.65;          // slightly eased stance sweep
+    up = -reach + (reach + push)*e;
+    lo = stanceFlex * Math.sin(Math.PI*k) * 0.9;
+  } else {
+    const k = (u-S)/(1-S);
+    const e = k*k*(3-2*k);
+    up = push + (-reach - push)*e;
+    lo = swingFlex * Math.sin(Math.PI*Math.pow(k,0.78));
+  }
+  return [up, lo];
+}
+
+/* ================================================================== STATE = */
+const limbs = [
+  { u:B.FLu, l:B.FLl, p:B.FLp, ph:0, front:true,  prevU:-1, landed:false },
+  { u:B.FRu, l:B.FRl, p:B.FRp, ph:0, front:true,  prevU:-1, landed:false },
+  { u:B.BLu, l:B.BLl, p:B.BLp, ph:0, front:false, prevU:-1, landed:false },
+  { u:B.BRu, l:B.BRl, p:B.BRp, ph:0, front:false, prevU:-1, landed:false }
+];
+
+const dog = {
+  x: 0, z: 0, yaw: 0,
+  speed: 5.2, targetSpeed: 5.2,
+  y: 0, groundY: 0, pitch: 0, roll: 0,
+  phase: 0, prevBodyY: 0, bodyVel: 0,
+  headYaw: 0, headPitch: 0, turn: 0, lean: 0, breathe: 0,
+  air: 0, airVel: 0, grounded: true, airBlend: 0, landT: 0, jumpHeld: false, launchSpeed: 0,
+  crouchT: 0, crouchK: 0, launchVel: 1, jumpPose: null,
+  running: false, sprint: false,
+  rollT: 0, rollHeld: false, rollSpin: 0, rollLift: 0, rollBlend: 0, rollSpeed0: 0,
+  prevYaw: 0, prevBodyVel: 0,
+  tailS: [0,1,2,3].map(() => ({ x:0, vx:0, y:0, vy:0 }))
+};
+const GRAVITY = 16.5, LAND_TIME = 0.34, CROUCH_TIME = 0.085, ROLL_TIME = 0.78;
+const cam = {
+  x: 0, y: 3, z: -6, tx: 0, ty: 1, tz: 0,
+  dist: 3.15, height: 1.30, yaw: 0, pitch: 0.088,
+  orbitYaw: 0, orbitPitch: 0, fov: 56, shake: 0
+};
+
+const MAX_SPEED = 8.8, SPRINT = 14.6;
+const keys = Object.create(null);
+let autoRun = true, interacted = false;
+
+// W and Q latch: the dog keeps running until S stops it
+addEventListener('keydown', e => {
+  if (e.repeat && (e.code === 'Space' || e.code === 'KeyE')) return;
+  keys[e.code] = true;
+  switch (e.code){
+    case 'KeyW': case 'ArrowUp':
+      autoRun = false; dog.running = true;  dog.sprint = false; break;
+    case 'KeyQ':
+      autoRun = false; dog.running = true;  dog.sprint = true;  break;
+    case 'KeyS': case 'ArrowDown':
+      autoRun = false; dog.running = false; dog.sprint = false; break;
+  }
+  if (['KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','Space',
+       'ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){
+    markInteracted();
+    e.preventDefault();
+  }
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+function markInteracted(){
+  if (interacted) return;
+  interacted = true;
+  document.getElementById('help').classList.add('dim');
+  setTimeout(()=>{ document.getElementById('title').style.opacity = '0.42'; }, 900);
+}
+
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('pointerdown', e => {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  cam.orbitYaw   -= (e.clientX - lastX) * 0.0055;
+  cam.orbitPitch  = clamp(cam.orbitPitch + (e.clientY - lastY) * 0.0035, -0.42, 0.70);
+  lastX = e.clientX; lastY = e.clientY;
+  markInteracted();
+});
+const endDrag = () => { dragging = false; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => {
+  cam.dist = clamp(cam.dist + e.deltaY*0.0030, 1.7, 10.0);
+  e.preventDefault();
+}, {passive:false});
+
+/* ============================================================ resize ====== */
+let W = 1, H = 1, dpr = 1;
+function resize(){
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = Math.max(1, Math.floor(innerWidth * dpr));
+  H = Math.max(1, Math.floor(innerHeight * dpr));
+  if (canvas.width !== W || canvas.height !== H){ canvas.width = W; canvas.height = H; }
+}
+addEventListener('resize', resize);
+resize();
+
+/* ============================================================ animation === */
+function animate(dt){
+  // ---------- input → speed / heading ----------
+  const kl = keys.KeyA || keys.ArrowLeft;
+  const kr = keys.KeyD || keys.ArrowRight;
+
+  if (autoRun) dog.targetSpeed = 7.4;
+  else if (dog.running) dog.targetSpeed = dog.sprint ? SPRINT : MAX_SPEED;
+  else dog.targetSpeed = 0;
+
+  // a leap and a roll both carry their momentum through
+  if (!dog.grounded) dog.targetSpeed = Math.max(dog.targetSpeed, dog.launchSpeed);
+  if (dog.rollT > 0) dog.targetSpeed = Math.max(dog.targetSpeed, dog.rollSpeed0);
+
+  const accel = dog.targetSpeed > dog.speed ? 3.1 : 5.0;
+  dog.speed = damp(dog.speed, dog.targetSpeed, accel, dt);
+  if (dog.speed < 0.02) dog.speed = 0;
+
+  // ---------- forward roll ----------
+  // The dog tucks and turns one full revolution about its own centre. The
+  // rotation happens in the model matrix about a pivot at chest height, so the
+  // feet swing over the top instead of the whole body pivoting on the ground.
+  if (keys.KeyE && !dog.rollHeld && dog.grounded && dog.rollT <= 0
+      && dog.landT <= 0 && dog.crouchT <= 0){
+    dog.rollT = ROLL_TIME;
+    dog.rollHeld = true;
+    dog.rollSpeed0 = Math.max(dog.speed, 3.4);   // a roll from standing still travels
+    for (let i=0;i<8;i++)
+      spawnDust(dog.x + (drnd()-0.5)*0.38, terrainH(dog.x, dog.z),
+                dog.z + (drnd()-0.5)*0.38, 1.2);
+  }
+  if (!keys.KeyE) dog.rollHeld = false;
+
+  if (dog.rollT > 0){
+    const was = dog.rollT;
+    dog.rollT = Math.max(0, dog.rollT - dt);
+    const u = 1 - dog.rollT/ROLL_TIME;
+    // slow into the tuck, quick over the top, settle on the way out
+    const e = u*u*u*(u*(u*6-15)+10);
+    dog.rollSpin = e * T;
+    if (was > 0 && dog.rollT === 0){             // coming back onto the feet
+      dog.rollSpin = 0;
+      for (let i=0;i<10;i++)
+        spawnDust(dog.x + (drnd()-0.5)*0.42, terrainH(dog.x, dog.z),
+                  dog.z + (drnd()-0.5)*0.42, 1.3);
+    }
+  } else { dog.rollSpin = 0; dog.rollLift = 0; }
+  {
+    const u = dog.rollT > 0 ? 1 - dog.rollT/ROLL_TIME : 1;
+    const tuck = dog.rollT > 0 ? smoothstep(0.0, 0.14, u) * smoothstep(1.0, 0.74, u) : 0;
+    dog.rollBlend = damp(dog.rollBlend, tuck, 26, dt);
+  }
+
+  // ---------- jump ----------
+  // pressing jump starts a gather; the push comes a moment later
+  if (keys.Space && !dog.jumpHeld && dog.grounded && dog.rollT <= 0
+      && dog.landT <= 0 && dog.crouchT <= 0){
+    dog.crouchT = CROUCH_TIME;
+    dog.jumpHeld = true;
+  }
+  if (!keys.Space) dog.jumpHeld = false;
+
+  if (dog.crouchT > 0){
+    dog.crouchT -= dt;
+    if (dog.crouchT <= 0){                      // the push
+      dog.crouchT = 0;
+      dog.airVel = 4.55 + dog.speed*0.078;      // a faster run carries further
+      dog.launchVel = dog.airVel;
+      dog.grounded = false;
+      dog.launchSpeed = dog.speed;
+      const bx = -Math.sin(dog.yaw)*0.28, bz = -Math.cos(dog.yaw)*0.28;
+      for (let i=0;i<10;i++)
+        spawnDust(dog.x + bx + (drnd()-0.5)*0.34, terrainH(dog.x, dog.z),
+                  dog.z + bz + (drnd()-0.5)*0.34, 1.6);
+    }
+  }
+  dog.crouchK = damp(dog.crouchK, dog.crouchT > 0 ? 1 : 0, dog.crouchT > 0 ? 34 : 45, dt);
+
+  if (!dog.grounded){
+    dog.airVel -= GRAVITY*dt;
+    dog.air += dog.airVel*dt;
+    if (dog.air <= 0){
+      dog.air = 0;
+      dog.grounded = true;
+      dog.landT = LAND_TIME;
+      const impact = clamp(-dog.airVel/5.5, 0.3, 1.4);
+      for (let i=0;i<15;i++)
+        spawnDust(dog.x + (drnd()-0.5)*0.44, terrainH(dog.x, dog.z),
+                  dog.z + (drnd()-0.5)*0.44, 1.1 + impact);
+      dog.airVel = 0;
+      // come down on the front feet, so the cycle resumes from a touchdown
+      dog.phase = (1 - (dog.jumpPose ? dog.jumpPose.frontPhase : 0) + 1) % 1;
+    }
+  }
+  if (dog.landT > 0) dog.landT = Math.max(0, dog.landT - dt);
+  dog.airBlend = damp(dog.airBlend, dog.grounded ? 0 : 1, dog.grounded ? 13 : 24, dt);
+
+  // where the dog is in its arc: +1 driving up, 0 at the top, -1 coming down
+  const arcRise   = dog.grounded ? 0 : clamp(dog.airVel / Math.max(dog.launchVel, 0.5), -1, 1);
+  const wLaunch   = Math.max(0, arcRise);
+  const wLand     = Math.max(0, -arcRise);
+  const wApex     = 1 - Math.abs(arcRise);
+
+  // turning gets tighter at low speed, wider at a gallop
+  const turnRate = lerp(2.35, 1.00, clamp(dog.speed/SPRINT,0,1));
+  let turnIn = (kl?1:0) - (kr?1:0);
+  if (autoRun) turnIn = Math.sin(timeNow*0.21)*0.35 + Math.sin(timeNow*0.083)*0.30;
+  dog.turn = damp(dog.turn, turnIn, 6.0, dt);
+  dog.yaw += dog.turn * turnRate * dt * (0.35 + 0.65*clamp(dog.speed/4,0,1));
+
+  const fx = Math.sin(dog.yaw), fz = Math.cos(dog.yaw);
+  dog.x += fx * dog.speed * dt;
+  dog.z += fz * dog.speed * dt;
+
+  // ---------- gait selection ----------
+  let g, sp = dog.speed;
+  if (sp < 0.35)      g = blendGaits(GAITS.idle,  GAITS.walk,   smoothstep(0.05,0.35,sp));
+  else if (sp < 2.55) g = blendGaits(GAITS.walk,  GAITS.trot,   smoothstep(1.95,2.55,sp));
+  else if (sp < 5.90) g = blendGaits(GAITS.trot,  GAITS.gallop, smoothstep(4.90,5.90,sp));
+  else                g = GAITS.gallop;
+
+  const freq = sp > 0.05 ? sp / g.stride : 0.55;
+  if (dog.grounded) dog.phase = (dog.phase + freq*dt) % 1;
+  dog.jumpPose = { frontPhase: g.phases[0] };
+  const t = dog.phase;
+  const amp = smoothstep(0.0, 0.9, sp);          // fade the whole cycle out when idle
+
+  // ---------- limbs ----------
+  for (let i=0;i<4;i++){ limbs[i].ph = g.phases[i]; limbs[i].landed = false; }
+  for (const L of limbs){
+    const u = (t + L.ph) % 1;
+    if (sp > 2.0 && L.prevU >= 0 && u < L.prevU) L.landed = true;
+    L.prevU = u;
+    let [up, lo] = limbCurve(u, g, L.front);
+    const bu = bones[L.u], bl = bones[L.l], bp = bones[L.p];
+
+    up *= amp; lo *= amp;
+
+    // the gather before the push: hocks and elbows fold, weight sinks back
+    if (dog.crouchK > 0.001){
+      const cUp = L.front ?  0.02 : 0.14;
+      const cLo = L.front ?  0.42 : 0.62;
+      up = lerp(up, cUp, dog.crouchK);
+      lo = lerp(lo, cLo, dog.crouchK);
+    }
+
+    // rolling: everything folds in tight
+    if (dog.rollBlend > 0.001){
+      const rUp = L.front ? -0.40 : -0.30;
+      const rLo = L.front ?  1.62 :  1.48;
+      up = lerp(up, rUp, dog.rollBlend);
+      lo = lerp(lo, rLo, dog.rollBlend);
+    }
+
+    // in the air the legs leave the cycle entirely, moving through three keys
+    if (dog.airBlend > 0.001){
+      const kUp = L.front
+        ? (wLaunch*(-0.50) + wApex*(-0.34) + wLand*(-0.72))
+        : (wLaunch*( 0.82) + wApex*(-0.30) + wLand*(-0.06));
+      const kLo = L.front
+        ? (wLaunch*( 1.46) + wApex*( 1.62) + wLand*( 0.22))
+        : (wLaunch*( 0.04) + wApex*( 1.42) + wLand*( 0.78));
+      up = lerp(up, kUp, dog.airBlend);
+      lo = lerp(lo, kLo, dog.airBlend);
+    }
+
+    // landing: front feet take it first, the hind pair a fraction later
+    let squash = 0;
+    if (dog.landT > 0){
+      const u = 1 - dog.landT/LAND_TIME;
+      const uu = L.front ? u : clamp((u - 0.13)/0.87, 0, 1);
+      squash = Math.sin(Math.PI * Math.pow(clamp(uu, 0, 1), 0.42)) * 0.62;
+    }
+
+    if (L.front){
+      bu.rx = up + 0.02 - squash*0.16;
+      bl.rx = lo + 0.05 + squash*0.34;             // carpus folds backward
+      bp.rx = (-up*0.55 - lo*0.55) - 0.03 - squash*0.14;
+    } else {
+      bu.rx = up - 0.02 - squash*0.20;
+      bl.rx = -lo - 0.05 - squash*0.34;            // stifle
+      bp.rx = (lo*0.95 + up*0.30) + 0.07 + squash*0.40;   // hock
+    }
+    // slight outward splay so the legs don't intersect the body
+    const side = (L.u === B.FLu || L.u === B.BLu) ? 1 : -1;
+    bu.rz = side * (0.02 + 0.035*amp*Math.sin(T*u));
+  }
+
+  // ---------- spine / body ----------
+  const bobPh  = T*(t*g.bobHarm) + 1.35;
+  const bodyY  = g.bobAmp*Math.sin(bobPh)*amp - g.bobAmp*0.45*amp;
+  const arch   = g.archAmp * Math.sin(T*t + 0.85) * amp;
+  const pitchB = g.pitchAmp * Math.sin(T*t - 0.30) * amp;
+
+  dog.breathe += dt * (1.1 + sp*0.16);
+  const breath = Math.sin(dog.breathe) * 0.012 * (1 - amp*0.6);
+
+  // the arc of a real leap: hollow the back to drive, round it at the top,
+  // stretch out again to reach for the ground
+  const airPitch = (wLaunch*(-0.26) + wApex*(-0.02) + wLand*(0.17)) * dog.airBlend
+                 + dog.crouchK*0.10;
+  const airArch  = (wLaunch*(-0.14) + wApex*( 0.34) + wLand*(-0.12)) * dog.airBlend
+                 + dog.crouchK*0.20;
+  const landDip  = dog.landT > 0
+                 ? Math.sin(Math.PI*Math.pow(1 - dog.landT/LAND_TIME, 0.42)) : 0;
+  const curl = dog.rollBlend;                  // the spine rounds right up
+  bones[B.root].rx  = pitchB + arch*0.55 + breath*0.5 + airPitch + airArch*0.5
+                    + landDip*0.10 + curl*0.36;
+  bones[B.spine].rx = -arch*0.90 - airArch*0.85 - landDip*0.12 - curl*0.66;
+  bones[B.chest].rx = arch*0.55 - pitchB*0.35 + airArch*0.45 + landDip*0.06 + curl*0.32;
+
+  // lateral sway + counter-rotation while turning
+  const sway = g.yawAmp*Math.sin(T*t)*amp;
+  bones[B.root].ry  = sway - dog.turn*0.13;
+  bones[B.spine].ry = -sway*0.6 + dog.turn*0.16;
+  bones[B.chest].ry = sway*0.4 + dog.turn*0.20;
+  bones[B.root].rz  = g.rollAmp*Math.sin(T*t + 1.6)*amp - dog.turn*0.10;
+  bones[B.chest].rz = -dog.turn*0.13;
+
+  // ---------- neck & head ----------
+  // A running dog does not hold its head still: the neck rides the stride and
+  // the skull follows a beat behind it. Only part of the body pitch is
+  // cancelled, so the gallop actually reaches the head.
+  const totalPitch = bones[B.root].rx + bones[B.spine].rx + bones[B.chest].rx;
+  const gait = 0.055 + 0.150*smoothstep(2.0, 12.0, sp);
+  dog.headYaw   = damp(dog.headYaw,   -dog.turn*0.30, 7, dt);
+  dog.headPitch = damp(dog.headPitch, -totalPitch*0.28 + smoothstep(4,12,sp)*0.10, 14, dt);
+
+  const neckBob = Math.sin(T*t + 0.35) * gait * amp;
+  const neckYaw = Math.sin(T*t*0.5 + 1.15) * (0.020 + 0.045*smoothstep(2,12,sp)) * amp;
+  // the head leads the jump: up on the drive, level at the top, down to spot
+  // the landing, then a nod as the weight arrives
+  const airHead = (wLaunch*(-0.34) + wApex*(-0.06) + wLand*(0.22)) * dog.airBlend
+                + dog.crouchK*0.16 + landDip*0.13;
+  bones[B.neck].rx = dog.headPitch - 0.24 - smoothstep(3,12,sp)*0.10 + neckBob + airHead
+                   + curl*0.62;                // the head tucks under first
+  bones[B.neck].ry = dog.headYaw*0.55 + neckYaw;
+  bones[B.neck].rz = dog.turn*0.10 + Math.sin(T*t + 1.9)*0.030*amp;
+  // the head lags the neck, which is what reads as weight
+  bones[B.head].rx = curl*0.40 - dog.headPitch*0.35 + 0.06 - neckBob*0.55
+                   + Math.sin(T*t - 0.55) * gait * 0.42 * amp;
+  bones[B.head].ry = dog.headYaw*0.75 - neckYaw*0.70 + Math.sin(T*t + 0.75)*0.030*amp;
+  bones[B.head].rz = -dog.turn*0.16 + Math.sin(T*t + 2.55)*0.045*amp;
+
+  // ---------- ears react to vertical acceleration ----------
+  const curBodyY = bodyY;
+  dog.bodyVel = damp(dog.bodyVel, (curBodyY - dog.prevBodyY)/Math.max(dt,1e-4), 16, dt);
+  dog.prevBodyY = curBodyY;
+  const flap = clamp(dog.bodyVel*0.28, -0.60, 0.60);
+  const earSwing = Math.sin(T*t - 0.95) * amp * (0.10 + 0.34*smoothstep(2.5, 13.0, sp));
+  const earWave  = Math.sin(T*t*1.0 + 0.6)*0.10*amp;
+  bones[B.earL].rx = -flap*0.9 - 0.10 + earWave + earSwing + dog.rollBlend*0.30;
+  bones[B.earR].rx = -flap*0.9 - 0.10 - earWave + earSwing + dog.rollBlend*0.30;
+  bones[B.earL].rz =  0.16 + flap*0.34 + earWave*0.5 + earSwing*0.45;
+  bones[B.earR].rz = -0.16 - flap*0.34 + earWave*0.5 - earSwing*0.45;
+
+  // ---------- tail ----------
+  // A chain of damped springs rather than a formula: each segment is pulled
+  // toward where the body is taking it and arrives late, so a turn cracks it
+  // sideways and a landing sends a wave down its length.
+  const stream = smoothstep(1.5, 9.0, sp);
+  const wag = (1 - stream*0.28);
+  const yawRate = clamp((dog.yaw - dog.prevYaw)/Math.max(dt,1e-4), -4, 4);
+  dog.prevYaw = dog.yaw;
+  const vAcc = clamp((dog.bodyVel - dog.prevBodyVel)/Math.max(dt,1e-4), -90, 90);
+  dog.prevBodyVel = dog.bodyVel;
+  const airTail = (wLaunch*(-0.14) + wApex*(-0.48) + wLand*(-0.32)) * dog.airBlend;
+  const landWhip = dog.landT > 0 ? Math.sin(Math.PI*Math.pow(1-dog.landT/LAND_TIME,0.4)) : 0;
+
+  for (let i=0;i<4;i++){
+    const S = dog.tailS[i];
+    const lag = 1 + i*0.62;                       // the tip carries the most swing
+
+    // sideways: the tail is left behind by a turn and pumped by the stride
+    const tgtY = clamp(-yawRate*0.20*lag, -0.75, 0.75)
+               + Math.sin(T*t*0.5 - i*0.62)*(0.22 + 0.10*i)*wag*(0.3 + 0.7*amp)
+               + Math.sin(timeNow*1.35 - i*0.7)*0.055*(1-amp);
+
+    // up and down: vertical acceleration flicks it, speed streams it out
+    const tgtX = clamp(-vAcc*0.0055*lag, -0.55, 0.55)
+               - stream*(i === 0 ? 0.32 : 0.22)
+               + airTail*(i === 0 ? 1.0 : 0.66)
+               + Math.sin(T*t + 0.55 - i*0.70)*(0.11 + 0.055*i)*amp
+               - dog.crouchK*0.22 - landWhip*0.20*lag + dog.rollBlend*0.55;
+
+    const k = 152 - i*22, c = 10.8 - i*1.2;       // underdamped, looser toward the tip
+    S.vy += (-(S.y - tgtY)*k - S.vy*c) * dt;  S.y += S.vy*dt;
+    S.vx += (-(S.x - tgtX)*k - S.vx*c) * dt;  S.x += S.vx*dt;
+
+    const b = bones[B.tail0 + i];
+    b.ry = S.y;
+    b.rx = S.x;
+    b.rz = S.y*0.30 + S.vy*0.016;                 // the plume rolls as it swings
+  }
+
+  updateSkeleton();
+
+  // ---------- dust from whichever paw just planted ----------
+  if (sp > 2.0){
+    const cy = Math.cos(dog.yaw), sy = Math.sin(dog.yaw);
+    const power = 0.55 + smoothstep(2.0, 12.0, sp);
+    for (const L of limbs){
+      if (!L.landed) continue;
+      const w = bones[L.p].world;
+      const wx = dog.x + w[12]*cy + w[14]*sy;
+      const wz = dog.z - w[12]*sy + w[14]*cy;
+      const puffs = 1 + (drnd() < power - 0.6 ? 1 : 0);
+      for (let k=0;k<puffs;k++) spawnDust(wx, terrainH(wx, wz), wz, power);
+    }
+  }
+
+  // ---------- the roll rides over the ground, not through it ----------
+  // Turn each joint through the same pivot the model matrix uses and raise the
+  // body by whatever the deepest one needs to keep its clearance.
+  if (dog.rollT > 0 || dog.rollLift > 0.0005){
+    // the same chain the model matrix applies: pivot spin, then lean, then the
+    // terrain pitch — anything less and a slope puts the body underground
+    const hc = 0.58;
+    const cs = Math.cos(dog.rollSpin),        sn = Math.sin(dog.rollSpin);
+    const cz = Math.cos(dog.roll + dog.lean), sz = Math.sin(dog.roll + dog.lean);
+    const cp = Math.cos(dog.pitch),           sp2 = Math.sin(dog.pitch);
+    let need = 0;
+    for (const v of hullIdx){
+      let px = 0, py = 0, pz = 0;
+      for (let j=0;j<4;j++){
+        const w = BW[v*4+j];
+        if (w <= 0) continue;
+        const m = bones[BI[v*4+j]].skin;
+        const x = P[v*3], y = P[v*3+1], z = P[v*3+2];
+        px += w*(m[0]*x + m[4]*y + m[8]*z + m[12]);
+        py += w*(m[1]*x + m[5]*y + m[9]*z + m[13]);
+        pz += w*(m[2]*x + m[6]*y + m[10]*z + m[14]);
+      }
+      const y1 = hc + (py - hc)*cs - pz*sn;
+      const z1 = (py - hc)*sn + pz*cs;
+      const y2 = px*sz + y1*cz;
+      const y3 = y2*cp - z1*sp2;
+      need = Math.max(need, 0.05 - y3);        // 2 cm of daylight under the skin
+    }
+    const want = Math.max(0, need);
+    dog.rollLift = want > dog.rollLift ? want : damp(dog.rollLift, want, 20, dt);
+  } else dog.rollLift = 0;
+
+  // ---------- ground placement ----------
+  const gh = terrainH(dog.x, dog.z);
+  const d = 0.55;
+  const hF = terrainH(dog.x + fx*d, dog.z + fz*d);
+  const hB = terrainH(dog.x - fx*d, dog.z - fz*d);
+  const lx = Math.cos(dog.yaw), lz = -Math.sin(dog.yaw);
+  const hL = terrainH(dog.x + lx*0.32, dog.z + lz*0.32);
+  const hR = terrainH(dog.x - lx*0.32, dog.z - lz*0.32);
+
+  const targetPitch = -Math.atan2(hF - hB, d*2);
+  const targetRoll  =  Math.atan2(hL - hR, 0.64);
+  dog.pitch = damp(dog.pitch, targetPitch, 9, dt);
+  dog.roll  = damp(dog.roll,  targetRoll,  9, dt);
+  dog.lean  = damp(dog.lean, -dog.turn * clamp(sp/SPRINT,0,1) * 0.22, 5, dt);
+
+  dog.groundY = damp(dog.groundY, gh + bodyY - 0.03, 26, dt);
+  dog.y = dog.groundY + dog.air - landDip*0.090 - dog.crouchK*0.070 + dog.rollLift;
+}
+
+/* ============================================================== camera ==== */
+function updateCamera(dt){
+  const fx = Math.sin(dog.yaw), fz = Math.cos(dog.yaw);
+  const sp01 = clamp(dog.speed/SPRINT, 0, 1);
+
+  cam.yaw   = damp(cam.yaw,   dog.yaw + cam.orbitYaw, 3.4, dt);
+  cam.pitch = damp(cam.pitch, 0.088 + cam.orbitPitch - sp01*0.026, 5, dt);
+  // orbit slowly re-centres behind the dog while running
+  cam.orbitYaw = damp(cam.orbitYaw, 0, dragging ? 0 : 0.45*sp01, dt);
+
+  const dist = cam.dist * (1 + sp01*0.14);
+  const cfx = Math.sin(cam.yaw), cfz = Math.cos(cam.yaw);
+  const cp = Math.cos(cam.pitch), spn = Math.sin(cam.pitch);
+
+  const tx = dog.x + fx*0.42;
+  const ty = dog.y + 0.70 + sp01*0.04;
+  const tz = dog.z + fz*0.42;
+
+  const follow = 8.5;
+  // an exponential follower trails a moving target by v/lambda — feed that back in
+  const lag = dog.speed / follow;
+
+  let px = tx - cfx*dist*cp + fx*lag;
+  let pz = tz - cfz*dist*cp + fz*lag;
+  let py = ty + cam.height*0.34 + dist*spn;
+  cam.x = damp(cam.x, px, follow, dt);
+  cam.z = damp(cam.z, pz, follow, dt);
+  cam.y = damp(cam.y, py, follow*0.85, dt);
+  cam.tx = damp(cam.tx, tx + fx*dog.speed/11, 11, dt);
+  cam.ty = damp(cam.ty, ty, 9, dt);
+  cam.tz = damp(cam.tz, tz + fz*dog.speed/11, 11, dt);
+
+  // never let the camera sink into a hill
+  const camGround = terrainH(cam.x, cam.z) + 0.55;
+  if (cam.y < camGround) cam.y = damp(cam.y, camGround, 40, dt), cam.y = Math.max(cam.y, camGround);
+
+  cam.fov = damp(cam.fov, 55 + sp01*9.5, 3.2, dt);
+}
+
+/* ============================================================== render ==== */
+let furShells = 2;
+let strandScale = 1;
+const comb = [0, 0, 0];
+function updateComb(dt){
+  const stream = clamp(dog.speed/SPRINT, 0, 1);
+  const cx = 0;
+  const cy = -0.42 + (dog.grounded ? 0 : 0.16);
+  const cz = -(0.86 + 0.55*stream);
+  const l = Math.hypot(cx, cy, cz) || 1;
+  const power = 0.80 + 0.35*stream;
+  comb[0] = damp(comb[0], cx/l*power, 6, dt);
+  comb[1] = damp(comb[1], cy/l*power, 6, dt);
+  comb[2] = damp(comb[2], cz/l*power, 6, dt);
+}
+
+const matVP = m4(), matP = m4(), matV = m4(), matInvVP = m4(), matModel = m4();
+const matLightVP = m4(), matLP = m4(), matLV = m4();
+const SUN = (() => { const v = [0.44, 0.52, 0.36]; const l = Math.hypot(...v); return [v[0]/l, v[1]/l, v[2]/l]; })();
+
+function buildModelMatrix(){
+  const a = m4(), b = m4();
+  m4trans(matModel, dog.x, dog.y, dog.z);
+  m4mul(matModel, matModel, m4rotY(a, dog.yaw));
+  m4mul(matModel, matModel, m4rotX(a, dog.pitch));
+  m4mul(matModel, matModel, m4rotZ(a, dog.roll + dog.lean));
+  if (dog.rollSpin !== 0){
+    // turn about the chest, not about the feet
+    const hc = 0.58;
+    m4mul(matModel, matModel, m4trans(a, 0, hc, 0));
+    m4mul(matModel, matModel, m4rotX(b, dog.rollSpin));
+    m4mul(matModel, matModel, m4trans(a, 0, -hc, 0));
+  }
+}
+
+function renderShadow(){
+  const cx = dog.x, cy = dog.y + 0.52 - dog.air*0.5, cz = dog.z;
+  const D = 7.0;
+  const ext = 1.30 + dog.air*0.55;
+  m4look(matLV, cx + SUN[0]*D, cy + SUN[1]*D, cz + SUN[2]*D, cx, cy, cz, 0, 1, 0);
+  m4ortho(matLP, -ext, ext, -(ext-0.15), ext-0.15, 0.4, 15.0 + dog.air*2.0);
+  m4mul(matLightVP, matLP, matLV);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, shadowFbo);
+  gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(true);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(depthProg);
+  gl.uniformMatrix4fv(depthProg.u.uLightVP, false, matLightVP);
+  if (depthProg.u.uShell)  gl.uniform1f(depthProg.u.uShell, 0);
+  if (depthProg.u.uShellN) gl.uniform1f(depthProg.u.uShellN, 1);
+  gl.uniformMatrix4fv(depthProg.u.uModel, false, matModel);
+  gl.uniformMatrix4fv(depthProg.u.uBones, false, boneMats);
+  gl.bindVertexArray(dogDepthVao);
+  gl.drawElements(gl.TRIANGLES, dogIndexCount, gl.UNSIGNED_INT, 0);
+  gl.bindVertexArray(null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+function setCommon(p){
+  if (p.u.uNoise){ gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noiseTex); gl.uniform1i(p.u.uNoise, 0); }
+  if (p.u.uShadowMap){ gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shadowTex); gl.uniform1i(p.u.uShadowMap, 1); }
+  if (p.u.uDetail){ gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, detailTex); gl.uniform1i(p.u.uDetail, 2); }
+  if (p.u.uLightVP) gl.uniformMatrix4fv(p.u.uLightVP, false, matLightVP);
+  if (p.u.uShadowOn) gl.uniform1f(p.u.uShadowOn, shadowOK ? 1 : 0);
+  if (p.u.uSunDir) gl.uniform3f(p.u.uSunDir, SUN[0], SUN[1], SUN[2]);
+  if (p.u.uCamPos) gl.uniform3f(p.u.uCamPos, cam.x, cam.y, cam.z);
+  if (p.u.uResolution) gl.uniform2f(p.u.uResolution, W, H);
+  if (p.u.uTime) gl.uniform1f(p.u.uTime, timeNow);
+  if (p.u.uVP) gl.uniformMatrix4fv(p.u.uVP, false, matVP);
+}
+
+function render(){
+  m4persp(matP, cam.fov*Math.PI/180, W/H, 0.06, 900);
+  m4look(matV, cam.x, cam.y, cam.z, cam.tx, cam.ty, cam.tz, 0, 1, 0);
+  m4mul(matVP, matP, matV);
+  m4inv(matInvVP, matVP);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.CULL_FACE);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(true);
+  gl.clearColor(0.62, 0.72, 0.86, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // sky
+  gl.depthMask(false);
+  gl.useProgram(skyProg);
+  setCommon(skyProg);
+  gl.uniformMatrix4fv(skyProg.u.uInvVP, false, matInvVP);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.depthMask(true);
+
+  // terrain
+  gl.useProgram(terProg);
+  setCommon(terProg);
+  gl.uniform2f(terProg.u.uOrigin, cam.x, cam.z);
+  gl.bindVertexArray(terVao);
+  gl.drawElements(gl.TRIANGLES, terIdx.length, gl.UNSIGNED_INT, 0);
+
+  // grass
+  const fx = Math.sin(dog.yaw), fz = Math.cos(dog.yaw);
+  gl.useProgram(grsProg);
+  setCommon(grsProg);
+  gl.uniform2f(grsProg.u.uOrigin,
+    Math.round(cam.x/GRASS_SPACING)*GRASS_SPACING,
+    Math.round(cam.z/GRASS_SPACING)*GRASS_SPACING);
+  gl.uniform1f(grsProg.u.uSpacing, GRASS_SPACING);
+  gl.uniform3f(grsProg.u.uDog, dog.x, dog.y, dog.z);
+  gl.uniform3f(grsProg.u.uDogFwd, fx, 0, fz);
+  gl.uniform1f(grsProg.u.uDogSpeed, dog.speed);
+  gl.uniform1f(grsProg.u.uDogAir, dog.air);
+  gl.bindVertexArray(grassVao);
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 7, Math.floor(grassCount*grassScale));
+
+  // dog
+  gl.useProgram(dogProg);
+  setCommon(dogProg);
+  gl.uniformMatrix4fv(dogProg.u.uModel, false, matModel);
+  gl.uniformMatrix4fv(dogProg.u.uBones, false, boneMats);
+  gl.uniform3f(dogProg.u.uTan, TAN[0], TAN[1], TAN[2]);
+  gl.uniform3f(dogProg.u.uCream, CREAM[0], CREAM[1], CREAM[2]);
+  gl.uniform1f(dogProg.u.uShellN, furShells);
+  gl.uniform3f(dogProg.u.uComb, comb[0], comb[1], comb[2]);
+  gl.bindVertexArray(dogVao);
+  for (let sh = 0; sh <= furShells; sh++){
+    gl.uniform1f(dogProg.u.uShell, sh);
+    gl.drawElements(gl.TRIANGLES, dogIndexCount, gl.UNSIGNED_INT, 0);
+  }
+  gl.bindVertexArray(null);
+
+  // the coat itself
+  gl.useProgram(furProg);
+  setCommon(furProg);
+  gl.uniformMatrix4fv(furProg.u.uModel, false, matModel);
+  gl.uniformMatrix4fv(furProg.u.uBones, false, boneMats);
+  gl.uniform3f(furProg.u.uComb, comb[0], comb[1], comb[2]);
+  gl.uniform1f(furProg.u.uSegs, FUR_SEG);
+  gl.uniform1f(furProg.u.uWind, timeNow);
+  gl.bindVertexArray(strandVao);
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (FUR_SEG+1)*2,
+                         Math.floor(strandCount*strandScale));
+  gl.bindVertexArray(null);
+
+  // dust
+  if (dustLive > 0){
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    gl.useProgram(dustProg);
+    setCommon(dustProg);
+    gl.uniform3f(dustProg.u.uRight, matV[0], matV[4], matV[8]);
+    gl.uniform3f(dustProg.u.uUp,    matV[1], matV[5], matV[9]);
+    gl.bindVertexArray(dustVao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, dustLive);
+    gl.bindVertexArray(null);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  }
+}
+
+/* =============================================================== main ==== */
+let timeNow = 0, last = performance.now();
+let grassScale = 1, frameAvg = 16.7;
+const svEl = document.getElementById('sv'), sgEl = document.getElementById('sg'), biEl = document.getElementById('bi');
+let hudTick = 0;
+
+function gaitName(sp){
+  if (dog.rollT > 0) return '앞구르기';
+  if (!dog.grounded) return '도약';
+  if (sp < 0.3) return '서 있음';
+  if (sp < 2.3) return '걷기';
+  if (sp < 5.4) return '속보';
+  if (sp < 11.5) return '구보';
+  return '전력 질주';
+}
+
+function frame(now){
+  const raw = (now - last) / 1000;
+  last = now;
+  const dt = Math.min(raw, 1/24);
+  timeNow += dt;
+
+  frameAvg = frameAvg*0.94 + raw*1000*0.06;
+  if (frameAvg > 23 && grassScale > 0.34) grassScale = Math.max(0.34, grassScale - 0.012);
+  else if (frameAvg < 15.5 && grassScale < 1) grassScale = Math.min(1, grassScale + 0.004);
+  if (frameAvg > 26 && strandScale > 0.35) strandScale = Math.max(0.35, strandScale - 0.010);
+  else if (frameAvg < 17.5 && strandScale < 1) strandScale = Math.min(1, strandScale + 0.004);
+
+  resize();
+  animate(dt);
+  updateComb(dt);
+  updateDust(dt);
+  updateCamera(dt);
+  buildModelMatrix();
+  if (shadowOK) renderShadow();
+  render();
+
+  hudTick += dt;
+  if (hudTick > 0.08){
+    hudTick = 0;
+    svEl.textContent = dog.speed.toFixed(1);
+    sgEl.textContent = gaitName(dog.speed);
+    biEl.style.width = (clamp(dog.speed/SPRINT,0,1)*100).toFixed(1) + '%';
+  }
+  requestAnimationFrame(frame);
+}
+
+// prime the pose so frame 0 already looks right
+updateSkeleton();
+dog.y = terrainH(dog.x, dog.z);
+cam.x = dog.x - Math.sin(dog.yaw)*4; cam.z = dog.z - Math.cos(dog.yaw)*4; cam.y = dog.y + 2;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
