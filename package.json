@@ -5,7 +5,8 @@
     "test": "node tests/smoke.cjs",
     "test:edge": "node tests/edge.cjs",
     "test:static": "node tests/static.cjs",
-    "test:render": "BANKHAR_RECORD=test-results/native BANKHAR_QUALITY=ultra BANKHAR_DPR=1.5 node tests/static.cjs && python3 tests/native-render.py test-results/native"
+    "test:render": "BANKHAR_RECORD=test-results/native BANKHAR_QUALITY=ultra BANKHAR_DPR=1.5 node tests/static.cjs && python3 tests/native-render.py test-results/native",
+    "test:model": "node tests/model.cjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

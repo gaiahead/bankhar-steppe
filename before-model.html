@@ -605,20 +605,7 @@ void main(){
 `);
 
 /* =================================================================== DOG == */
-const GROOM = `
-// Rest-space grooming, skinned with the anatomy instead of a world-space comb.
-vec3 groomGuide(vec3 p){
-  vec3 g=vec3(p.x*0.35,-0.40,-1.0);
-  float leg=1.0-smoothstep(0.40,0.69,p.y);
-  g=mix(g,vec3(0.0,-1.0,-0.12),leg);
-  float neck=smoothstep(0.22,0.38,p.z)*(1.0-smoothstep(0.98,1.20,p.y));
-  g=mix(g,vec3(p.x*0.6,-1.0,-0.30),neck);
-  float face=smoothstep(0.52,0.64,p.z)*smoothstep(0.89,1.01,p.y);
-  g=mix(g,vec3(p.x*1.8,-0.24,-0.85),face);
-  return normalize(g);
-}
-`;
-const DOG_VS_BODY = GROOM + `
+const DOG_VS_BODY = `
 in vec3 aPos;
 in vec3 aNor;
 in vec4 aCol;
@@ -657,12 +644,11 @@ void main(){
   vShellT = ft;
   vFur = aFur;
   vMark = aMark;
-  vec3 guide = mat3(S)*groomGuide(aPos) + uComb*0.16;
-  vec3 flow = guide - sn * dot(guide, sn);           // comb along the surface
+  vec3 flow = uComb - sn * dot(uComb, sn);           // comb along the surface
   float fl = length(flow);
   flow = fl > 1e-4 ? flow / fl : vec3(0.0);
   // the shells are only the dense undercoat now; the strands are the topcoat
-  sp.xyz += sn * (aFur * ft * 0.15) + flow * (aFur * ft * 0.15);
+  sp.xyz += sn * (aFur * ft * 0.34) + flow * (aFur * ft * 0.34);
   vFlow = flow;
   vec4 wp = uModel * vec4(sp.xyz, 1.0);
   vW = wp.xyz;
@@ -698,8 +684,8 @@ vec4 triDetail(vec3 q, vec3 w, float sc){
 // one value per hair follicle — constant along a strand, so the shells stack
 float strand(vec3 q){
   vec3 e = q * vec3(1.0, 1.0, 0.34);       // elongated head-to-tail
-  return vnoise(e.xz*680.0 + e.y*397.0) * 0.55
-       + vnoise(e.yz*931.0 + e.x*211.0) * 0.45;
+  return vnoise(e.xz*168.0 + e.y*97.0) * 0.55
+       + vnoise(e.yz*231.0 + e.x*51.0) * 0.45;
 }
 
 void main(){
@@ -716,7 +702,7 @@ void main(){
   float ao;
   if (uShell > 0.5) {
     if (shine > 0.4 || vFur < 0.004) discard;
-    if (strand(vLocal) < mix(0.18, 0.76, vShellT)) discard;
+    if (strand(vLocal) < mix(0.04, 0.80, vShellT)) discard;
     ao = mix(1.0, mix(0.58, 1.18, vShellT), shag);
   } else {
     // the skin layer is only seen through gaps in the coat, so it stays dark
@@ -730,10 +716,8 @@ void main(){
   const float DSC = 30.0;
   vec4 d0 = triDetail(vLocal, tw, DSC);
   // pores over hide, pebbled leather over the nose
-  float shortFace = smoothstep(0.52,0.60,vLocal.z)*(1.0-step(0.4,shine));
-  float nap = vnoise(vec2(vLocal.x*950.0+vLocal.y*610.0,vLocal.z*95.0));
-  float hgt = mix(mix(d0.r,nap,shortFace*0.75), d0.g, shine);
-  float relief = mix(0.00019, 0.00035, shine) * (1.0-step(0.95,shine)) * (1.0 - smoothstep(0.010, 0.030, vFur));
+  float hgt = mix(d0.r, d0.g, shine);
+  float relief = mix(0.026, 0.105, shine) * (1.0 - smoothstep(0.010, 0.030, vFur));
   {
     // surface-space gradient straight from the screen-space derivatives
     vec3 sS = dFdx(vW), sT = dFdy(vW);
@@ -746,7 +730,7 @@ void main(){
   // fine fur break-up
   float fz = vnoise(vLocal.xz*54.0 + vLocal.y*33.0) * 0.5
            + vnoise(vLocal.yz*110.0) * 0.5;
-  alb *= mix(0.94, 1.06, fz) * mix(0.97, 1.03, d0.b);
+  alb *= mix(0.76, 1.26, fz) * mix(0.90, 1.10, d0.b);
   alb *= 1.0 + 0.17*vShellT*shag;       // guard hairs are sun-bleached at the tip
   alb = mix(alb, vCol.rgb*mix(0.84,1.16,d0.g), shine);   // leather mottling
 
@@ -754,10 +738,8 @@ void main(){
   // channel dithers the boundary so it breaks up at hair scale
   if (shine < 0.4){
     float g = texture(uDetail, vLocal.xz*96.0 + vLocal.y*17.0).b - 0.5;
-    vec3 pointColor=mix(uTan,vec3(0.122,0.068,0.041),shortFace*0.85);
-    alb = mix(alb, pointColor, smoothstep(0.25, 0.75, vMark.x + g*0.22));
-    alb *= mix(1.0,mix(0.88,1.08,nap),shortFace);
-    alb = mix(alb, uCream, smoothstep(0.45, 0.55, vMark.y + g*0.16));
+    alb = mix(alb, uTan,   smoothstep(0.44, 0.56, vMark.x + g*0.42));
+    alb = mix(alb, uCream, smoothstep(0.45, 0.55, vMark.y + g*0.36));
   }
 
   float ndl = dot(N, uSunDir);
@@ -776,10 +758,9 @@ void main(){
   vec3 H = normalize(uSunDir + V);
   float rough = mix(0.80, 1.30, d0.a);
   float spow = mix(9.0, 200.0, shine) * rough;
-  if(shine>0.95) spow=650.0;
   float spec = pow(max(dot(N,H),0.0), spow)
-             + pow(max(dot(N,H),0.0), mix(40.0, 650.0, shine)*rough) * 0.6;
-  c += SUN_COL * spec * mix(0.009, 0.24, shine) * sh * mix(1.25, 0.75, d0.a);
+             + pow(max(dot(N,H),0.0), mix(40.0, 200.0, shine)*rough) * 0.6;
+  c += SUN_COL * spec * mix(0.022, 0.55, shine) * sh * mix(1.25, 0.75, d0.a);
 
   // anisotropic sheen along the hair, the way light runs down a dog's coat
   if (shag > 0.15){
@@ -788,16 +769,15 @@ void main(){
     float sinTH = sqrt(max(0.0, 1.0 - th*th));
     float sinTV = sqrt(max(0.0, 1.0 - tv*tv));
     float kk = pow(clamp(sinTH*sinTV - th*tv, 0.0, 1.0), 44.0);
-    c += SUN_COL * kk * 0.016 * shag * sh;
-    c += vec3(0.006,0.008,0.010)*pow(max(N.y*0.7+N.x*0.3,0.0),2.0)*shag;
+    c += SUN_COL * kk * 0.055 * shag * sh;
   }
 
   // rim / fur backlight — the halo that sells the coat
   float fres = pow(1.0 - max(dot(N,V),0.0), 3.6);
   float bl = pow(clamp(dot(-V, uSunDir)*0.5+0.5, 0.0, 1.0), 3.0);
-  c += SUN_COL * fres * (0.008 + 0.065*bl) * (1.0 - shine*0.9) * mix(0.25,1.0,sh)
+  c += SUN_COL * fres * (0.045 + 0.42*bl) * (1.0 - shine*0.9) * mix(0.25,1.0,sh)
      * (1.0 + 2.2*vShellT);
-  c += SKY_HOR * fres * 0.012;
+  c += SKY_HOR * fres * 0.075;
 
   c = applyFog(c, vW, dist);
   fc = vec4(finish(c), 1.0);
@@ -820,7 +800,7 @@ void main(){}
 /* Every hair is a real tapered ribbon grown off the skin and skinned to the
    same skeleton, so the coat moves with the dog instead of sitting on it. */
 const FUR_SEG = 5;
-const furProg = program(HEAD + COMMON + GROOM + `
+const furProg = program(HEAD + COMMON + `
 in vec3 aRoot;      // follicle position on the skin, rest pose
 in vec3 aRNrm;      // skin normal there
 in vec3 aRCol;      // coat colour at the root
@@ -858,8 +838,7 @@ void main(){
   vWhisk = whisk;
 
   // the comb laid flat against the skin is the direction the coat lies in
-  vec3 guide = mat3(S)*groomGuide(aRoot) + uComb*0.16;
-  vec3 flow = guide - n * dot(guide, n);
+  vec3 flow = uComb - n * dot(uComb, n);
   float fl = length(flow);
   flow = fl > 1e-4 ? flow / fl : vec3(0.0);
 
@@ -871,34 +850,32 @@ void main(){
 
   // a whisker is stiff: it leaves the skin straight and hardly combs, and it
   // sweeps forward off the muzzle instead of standing on the normal
-  float guard = smoothstep(0.018,0.030,len)*(1.0-smoothstep(0.040,0.060,len));
-  float straight = mix(1.0,0.42,guard);
-  float bendK  = mix(straight, 0.22, whisk);
-  float standK = mix(0.38, 1.10, whisk);
+  float bendK  = mix(1.0, 0.22, whisk);
+  float standK = mix(1.0, 1.30, whisk);
   vec3 fwd = normalize(mat3(S) * vec3(0.0, -0.20, 1.0));
   vec3 grow = normalize(mix(n, normalize(n*0.70 + fwd*0.85), whisk));
   vec3 pos = root
            + grow * (len * t * (1.06 - 0.26*t) * standK)
            + flow * (len * t * t * (0.66 + 0.34*seed) * bendK)
-           + (t1*aRPar.z + t2*aRPar.w) * (len * t * t * 0.85 * straight)
+           + (t1*aRPar.z + t2*aRPar.w) * (len * t * t * 0.85)
            + t1 * (len * t * t * sway * 0.30 * bendK)
            + vec3(0.0,-1.0,0.0) * (len * t*t*t * mix(0.30, 0.55, whisk));
 
-  // Analytic tangent stays stable at the tip and includes every bend term.
-  vec3 tan = normalize(
-      grow*(len*(1.06-0.52*t)*standK)
-    + flow*(len*2.0*t*(0.66+0.34*seed)*bendK)
-    + (t1*aRPar.z+t2*aRPar.w)*(len*2.0*t*0.85*straight)
-    + t1*(len*2.0*t*sway*0.30*bendK)
-    + vec3(0.0,-1.0,0.0)*(len*3.0*t*t*mix(0.30,0.55,whisk)));
+  // tangent by differencing a hair's own curve
+  float t2n = min(t + 0.12, 1.0);
+  vec3 pos2 = root
+            + grow * (len * t2n * (1.06 - 0.26*t2n) * standK)
+            + flow * (len * t2n * t2n * (0.66 + 0.34*seed) * bendK)
+            + (t1*aRPar.z + t2*aRPar.w) * (len * t2n * t2n * 0.85);
+  vec3 tan = normalize(pos2 - pos + n * 1e-4);
 
   vec4 wp = uModel * vec4(pos, 1.0);
   vec3 wtan = normalize(mat3(uModel) * tan);
   vec3 view = normalize(uCamPos - wp.xyz);
   vec3 wide = normalize(cross(wtan, view));
 
-  float w = mix(0.00065, 0.00006, t) * (0.60 + 0.80*seed) * clamp(len/0.020, 0.45, 1.0);
-  w = mix(w, mix(0.00025, 0.00005, t), whisk);
+  float w = mix(0.0013, 0.00014, t) * (0.60 + 0.80*seed) * clamp(len/0.020, 0.45, 1.0);
+  w = mix(w, mix(0.00085, 0.00016, t), whisk);
   wp.xyz += wide * (w * side);
 
   vW = wp.xyz;
@@ -938,15 +915,15 @@ void main(){
   float depth = mix(1.0, mix(0.62, 1.0, vT*vT*0.55 + vT*0.45), thick);
 
   vec3 alb = vCol * mix(1.0, mix(0.88, 1.16, vT), thick);
-  alb = mix(alb, vec3(0.10, 0.085, 0.068), vWhisk);   // vibrissae are pale
+  alb = mix(alb, vec3(0.395, 0.372, 0.340), vWhisk);   // vibrissae are pale
   vec3 c = alb * SUN_COL * diff * depth * mix(sh, sh*0.5+0.5, 0.25);
   c += alb * mix(GND_BOUNCE, SKY_HOR*1.2, 0.72) * 1.1 * depth;
   // Broad cool sky reflection gives black guard hairs readable volume.
-  c += vec3(0.025,0.033,0.041)*pow(max(dot(normalize(vNrm),normalize(vec3(-0.6,0.8,0.3))),0.0),2.0)*depth*0.22;
+  c += vec3(0.12,0.18,0.22)*pow(max(dot(normalize(vNrm),normalize(vec3(-0.6,0.8,0.3))),0.0),2.0)*depth*0.22;
 
   // the sheen a black coat carries, tinted by the hair rather than white
   float spec = pow(clamp(sinTH*sinTV - th*tv, 0.0, 1.0), 48.0);
-  c += mix(SUN_COL*0.035, SUN_COL*alb*1.5, 0.8) * spec * 0.12 * sh * mix(0.4, 1.0, vT);
+  c += mix(SUN_COL*0.35, SUN_COL*alb*3.0, 0.6) * spec * 0.18 * sh * mix(0.4, 1.0, vT);
 
   // rim: sun through the coat is what makes a shaggy dog glow
   float back = pow(clamp(dot(-V, uSunDir)*0.5 + 0.5, 0.0, 1.0), 2.6);
@@ -1238,11 +1215,11 @@ bone('FRu',    'chest',    -0.104, 0.596,  0.220);
 bone('FRl',    'FRu',      -0.115, 0.332,  0.178);
 bone('FRp',    'FRl',      -0.115, 0.142,  0.206);
 bone('BLu',    'root',      0.114, 0.606, -0.296);
-bone('BLl',    'BLu',       0.130, 0.342, -0.225);
-bone('BLp',    'BLl',       0.130, 0.172, -0.355);
+bone('BLl',    'BLu',       0.130, 0.342, -0.346);
+bone('BLp',    'BLl',       0.130, 0.172, -0.244);
 bone('BRu',    'root',     -0.114, 0.606, -0.296);
-bone('BRl',    'BRu',      -0.130, 0.342, -0.225);
-bone('BRp',    'BRl',      -0.130, 0.172, -0.355);
+bone('BRl',    'BRu',      -0.130, 0.342, -0.346);
+bone('BRp',    'BRl',      -0.130, 0.172, -0.244);
 
 for (const b of bones){
   const p = b.parent >= 0 ? bones[b.parent].rest : [0,0,0];
@@ -1270,44 +1247,90 @@ function updateSkeleton(){
 /* ============================================================ DOG GEOMETRY = */
 const P = [], Nn = [], C = [], BI = [], BW = [], FUR = [], MK = [], IDX = [];
 
-const COAT   = [0.060, 0.064, 0.068];
-const TAN    = [0.190, 0.120, 0.075];
-const CREAM  = [0.56, 0.53, 0.47];
+const COAT   = [0.095, 0.103, 0.108];   // black — the prized Bankhar colour
+const TAN    = [0.40, 0.205, 0.071];   // mahogany points
+const TAN_LT = [0.47, 0.254, 0.10];   // brighter mahogany of the eye spots
+const CREAM  = [0.815, 0.795, 0.760];   // the white chest patch
 
-// Rest-space lengths: close face and shins, guard coat on the back, longer
-// descending ruff and breeches. Length never substitutes for body volume.
+/* Coat length in metres. A Bankhar carries 7-10 cm of hair in winter, but not
+   evenly: a heavy mane over neck and shoulders, breeches on the thighs, a
+   plumed tail, and short hair on the face and below the hocks. Driving the
+   shell offsets from this is what gives the silhouette its bear-like bulk. */
 let curFur = 0.030;
 const furAt = q => (typeof curFur === 'function' ? curFur(q) : curFur);
-function torsoFur([x,y,z]){
-  return 0.028 + 0.021*smoothstep(0.02,0.28,z)
-    + 0.020*smoothstep(0.55,0.40,y)*smoothstep(-0.20,0.12,z);
+
+function torsoFur(q){
+  const [x, y, z] = q;
+  let f = 0.058;                                                       // the body coat itself
+  f = Math.max(f, lerp(0.058, 0.094, smoothstep(-0.04, 0.24, z)        // mane over the shoulders
+                                     * lerp(0.70, 1.0, smoothstep(0.02, 0.10, Math.abs(x)))));
+  f = Math.max(f, lerp(0.058, 0.076, smoothstep(0.56, 0.44, y)));      // brisket and belly fringe
+  f = Math.max(f, lerp(0.058, 0.070, smoothstep(-0.06, -0.28, z)       // breeches
+                                     * smoothstep(0.42, 0.56, y)
+                                     * smoothstep(0.74, 0.60, y)));
+  return f;
 }
-function neckFur([x,y,z]){
-  return lerp(0.066,0.019,smoothstep(0.74,1.01,y))
-    * lerp(0.8,1.05,smoothstep(0.02,0.10,Math.abs(x)));
+function neckFur(q){
+  const [x, y, z] = q;
+  const base = lerp(0.098, 0.030, smoothstep(0.26, 0.42, z));
+  const side = lerp(0.58, 1.00, smoothstep(0.02, 0.11, Math.abs(x)));
+  const low  = lerp(0.46, 1.20, smoothstep(0.96, 0.68, y));
+  return base * side * low;
 }
-function headFur(q){return lerp(0.017,0.0045,smoothstep(0.46,0.63,q[2]));}
-function frontLegFur(q){return lerp(0.0045,0.025,smoothstep(0.27,0.56,q[1]));}
-function hindLegFur(q){return lerp(0.0045,0.045,smoothstep(0.25,0.55,q[1]));}
-function markColor([x,y,z]){
-  const col=COAT.slice();
-  let tan=0,cream=0;
-  // Irregular, restrained points above the toes, with dark wrist fronts.
-  tan=smoothstep(0.38,0.13,y)*0.85;
-  tan*=lerp(0.68,1,smoothstep(-0.4,0.6,Math.sin(z*53+x*32)));
-  if(y<0.09) tan*=0.77;
-  for(const sx of [-1,1]){
-    // Short mahogany hairs follow the lower cheek plane, leaving a black
-    // bridge and nostril mask instead of an uninterrupted orange muzzle band.
-    const cheek=smoothstep(1.30,0.65,Math.hypot((z-0.593)/0.078,(y-0.925)/0.044))
-      *smoothstep(0.020,0.055,Math.abs(x))*smoothstep(0.699,0.654,z);
-    tan=Math.max(tan,cheek*0.83);
-    const brow=Math.hypot((x-sx*0.093)/0.022,(y-1.077)/0.015,(z-0.548)/0.030);
-    tan=Math.max(tan,smoothstep(1.23,0.65,brow));
+function headFur(q){ return lerp(0.021, 0.0105, smoothstep(0.42, 0.68, q[2])); }
+function frontLegFur(q){ return lerp(0.009, 0.056, smoothstep(0.16, 0.44, q[1])); }
+function hindLegFur(q){  return lerp(0.009, 0.062, smoothstep(0.16, 0.42, q[1])); }
+
+/* Returns the base coat colour plus how much mahogany and how much white this
+   point carries. The amounts are thresholded later - per fragment on the skin,
+   per hair in the coat - so a marking edge breaks up instead of smearing. */
+function markColor(p){
+  const [x,y,z] = p;
+  let col = COAT.slice();
+  const mixTo = (c, t) => { for (let i=0;i<3;i++) col[i] = lerp(col[i], c[i], clamp(t,0,1)); };
+  let tan = 0, cream = 0;
+  const addTan = t => { tan = Math.max(tan, clamp(t,0,1)); };
+
+  // mahogany points on the lower legs - the black-and-tan of the four-eye dog
+  addTan(smoothstep(0.310, 0.095, y) * 0.90);
+  addTan(smoothstep(0.105, 0.030, y) * 0.55);
+
+  // the muzzle keeps its dark mask; mahogany sits on the cheeks and lower jaw
+  for (const sx of [1,-1]){
+    const cd = Math.hypot((x - sx*0.076)*0.70, (y-0.942)*1.35, (z-0.606)*0.95);
+    addTan(smoothstep(0.050, 0.013, cd) * 0.58);
   }
-  // A small throat fleck, never a white bib over the entire barrel.
-  cream=smoothstep(1,0.3,Math.hypot(x/0.038,(y-0.53)/0.065,(z-0.322)/0.057))*0.75;
-  return {col,tan,cream};
+  const jaw = smoothstep(0.580, 0.644, z) * smoothstep(0.936, 0.906, y);
+  mixTo([0.150,0.108,0.084], jaw*0.80);
+
+  // "spectacles" - the lighter ring the standard describes around each eye
+  for (const sx of [1,-1]){
+    const sd = Math.hypot((x - sx*0.086)*0.85, (y-1.012)*0.95, (z-0.554)*1.20);
+    addTan(smoothstep(0.040, 0.026, sd) * 0.45);
+  }
+  // "дөрвөн нүдтэй" - the four-eye spots the herders prize
+  for (const sx of [1,-1]){
+    const d = Math.hypot((x - sx*0.074)*0.95, (y-1.050)*1.10, (z-0.534)*0.95);
+    addTan(smoothstep(0.033, 0.010, d) * 1.0);
+  }
+  // the clearly defined white chest patch
+  const bd = Math.hypot(x*1.30, (y-0.500)*0.90, (z-0.330)*0.70);
+  cream = clamp(smoothstep(0.130, 0.062, bd) * 0.95, 0, 1);
+  // the mane is grizzled, so it separates from the shoulder
+  const ruff = smoothstep(0.180, 0.290, z) * smoothstep(0.480, 0.400, z)
+             * smoothstep(0.570, 0.690, y);
+  mixTo([0.158,0.142,0.132], ruff*0.75);
+  // ear leather takes a warmer tone than the skull
+  const ed = Math.min(Math.hypot(x-0.136,(y-0.964)*0.85,(z-0.502)*1.5),
+                      Math.hypot(x+0.136,(y-0.964)*0.85,(z-0.502)*1.5));
+  mixTo([0.230,0.163,0.118], smoothstep(0.082, 0.018, ed) * 0.95);
+  // belly warms slightly
+  mixTo([0.158,0.124,0.102], smoothstep(0.50,0.39,y) * smoothstep(0.22,-0.10,Math.abs(z)) * 0.40);
+  // mahogany under the tail, as the standard describes
+  const td = Math.hypot(x, (y-0.870)*0.8, (z+0.230)*0.8);
+  addTan(smoothstep(0.115, 0.035, td) * 0.60);
+
+  return { col, tan, cream };
 }
 
 /* the same threshold the shader uses, so coat and skin agree at a boundary */
@@ -1315,6 +1338,19 @@ function markGrain(x, y, z){
   return vnoise(x*88 + 7.3, z*88 + 2.1) * 0.55
        + vnoise(y*97 + 4.7, x*97 + 9.4) * 0.45;
 }
+function markedColor(p){
+  const m = markColor(p);
+  const g = markGrain(p[0], p[1], p[2]) - 0.5;
+  const c = m.col.slice();
+  const ta = smoothstep(0.44, 0.56, m.tan   + g*0.42);
+  const ca = smoothstep(0.45, 0.55, m.cream + g*0.36);
+  for (let i=0;i<3;i++){
+    c[i] = lerp(c[i], TAN[i], ta);
+    c[i] = lerp(c[i], CREAM[i], ca);
+  }
+  return c;
+}
+
 function pushVert(px,py,pz, bi, bw, shine, colOverride){
   P.push(px,py,pz);
   Nn.push(0,0,0);
@@ -1387,10 +1423,6 @@ function loft(joints, radii, boneOf, opts){
     let right = cross3(upRef, tan);
     if (Math.hypot(right[0],right[1],right[2]) < 1e-4) right = cross3([1,0,0], tan);
     right = norm3(right);
-    // Keep successive limb rings aligned when the chain turns at a joint.
-    // A sign flip here twists the connected skin into a pinched bow tie.
-    if(opts.continuousFrame && i>0 && right.reduce((d,v,j)=>d+v*rings[i-1].right[j],0)<0)
-      right=right.map(v=>-v);
     const up = norm3(cross3(tan, right));
     rings[i].tan = tan; rings[i].right = right; rings[i].up = up;
   }
@@ -1441,11 +1473,11 @@ function loft(joints, radii, boneOf, opts){
   // seal the tips with a fan
   if (capA){
     const a = ringStart[0];
-    for (let s=1;s<seg-1;s++) IDX.push(a, a+s, a+s+1);
+    for (let s=1;s<seg-1;s++) IDX.push(a, a+s+1, a+s);
   }
   if (capB){
     const a = ringStart[ringStart.length-1];
-    for (let s=1;s<seg-1;s++) IDX.push(a, a+s+1, a+s);
+    for (let s=1;s<seg-1;s++) IDX.push(a, a+s, a+s+1);
   }
   return startIdx;
 }
@@ -1478,187 +1510,209 @@ function part(fn){
   parts.push({ v0, v1: P.length/3, i0, i1: IDX.length });
 }
 
-/* A longitudinal surface with independent dorsal and ventral contours.
-   Unlike overlapping ellipsoids this gives the stop, cheek, nasal bridge,
-   brisket and abdominal tuck a single continuous skin. */
-function sectionSkin(rows, weights, opts={}){
-  const seg=opts.seg||32, sub=opts.sub||5, base=P.length/3;
-  const cat=(a,b,c,d,t)=>0.5*((2*b)+(-a+c)*t+(2*a-5*b+4*c-d)*t*t+(-a+3*b-3*c+d)*t*t*t);
-  curFur=opts.fur||0;
-  const ringCount=(rows.length-1)*sub+1;
-  for(let r=0;r<ringCount;r++){
-    const k=Math.min(rows.length-2,Math.floor(r/sub)),t=(r-k*sub)/sub;
-    const q=rows[k].map((v,j)=>cat(rows[Math.max(0,k-1)][j],v,rows[k+1][j],rows[Math.min(rows.length-1,k+2)][j],t));
-    const [z,rx,top,bottom]=q,cy=(top+bottom)*0.5,ry=(top-bottom)*0.5;
-    for(let i=0;i<seg;i++){
-      const th=i/seg*T,cs=Math.cos(th),sn=Math.sin(th);
-      const power=opts.square||1;
-      let x=rx*Math.sign(cs)*Math.pow(Math.abs(cs),power);
-      let y=cy+ry*Math.sign(sn)*Math.pow(Math.abs(sn),power);
-      if(opts.nose)x*=lerp(0.60,1,smoothstep(-0.8,0.4,sn));
-      // Recess the orbital plane into the cheek; the eyelid bounds the opening.
-      if(opts.head){
-        const socket=Math.exp(-Math.pow((Math.abs(x)-0.104)/0.027,2)-Math.pow((y-1.031)/0.022,2)-Math.pow((z-0.558)/0.025,2));
-        x*=1-0.12*socket;
-        // A low supraorbital ridge gives the upper lid a fur-covered brow plane.
-        y+=0.0045*Math.exp(-Math.pow((Math.abs(x)-0.095)/0.030,2)-Math.pow((z-0.547)/0.032,2))*smoothstep(1.038,1.066,y);
-        y-=0.004*Math.exp(-Math.pow(x/0.024,2))*smoothstep(0.59,0.50,z)*Math.max(sn,0);
-      }
-      pushVert(x,y,z,[weights[k],weights[k+1],0,0],[1-t,t,0,0],opts.shine||0,opts.color||null);
+/* ---- torso: broad level topline over a deep heart-shaped rib cage -------- */
+part(() => loft(
+  [[0,0.650,-0.456],[0,0.642,-0.392],[0,0.632,-0.308],[0,0.628,-0.206],
+   [0,0.622,-0.094],[0,0.614, 0.018],[0,0.608, 0.130],[0,0.608, 0.228],
+   [0,0.620, 0.306],[0,0.626, 0.368]],
+  [[0.092,0.100],[0.134,0.152],[0.148,0.184],[0.156,0.202],
+   [0.160,0.216],[0.164,0.228],[0.168,0.240],[0.166,0.242],
+   [0.158,0.228],[0.132,0.200]],
+  [B.root,B.root,B.root,B.spine,B.spine,B.spine,B.chest,B.chest,B.chest,B.chest],
+  { seg:22, sub:3, fur: torsoFur }
+));
+
+/* ---- neck: powerful, arched and set low, buried in the mane ------------- */
+part(() => loft(
+  [[0,0.664,0.284],[0,0.772,0.318],[0,0.878,0.352],[0,0.948,0.382],[0,0.982,0.402]],
+  [[0.158,0.192],[0.142,0.176],[0.122,0.148],[0.106,0.126],[0.096,0.112]],
+  [B.chest,B.neck,B.neck,B.head,B.head],
+  { seg:18, sub:3, capStart:false, capEnd:false, fur: neckFur }
+));
+
+/* ---- head ---------------------------------------------------------------
+   Wide cranium with a deep frontal furrow, gradual stop, and a muzzle that is
+   trapezoidal from above and almost blunt at the tip. 34 cm long on an 85 cm
+   dog, which is the ratio a bear-headed guardian actually carries. */
+const headShape = (th, u) => {
+  const c = Math.abs(Math.cos(th)), sn = Math.sin(th);
+  // the cross-section squares off toward the muzzle
+  const n = lerp(2.0, 2.7, smoothstep(0.40, 0.78, u));
+  let m = Math.pow(Math.pow(c, n) + Math.pow(Math.abs(sn), n), -1/n);
+  // frontal furrow: a groove along the top of the skull
+  const groove = Math.exp(-Math.pow((th - Math.PI/2) / 0.26, 2));
+  m *= 1 - 0.085 * groove * smoothstep(0.62, 0.28, u);
+  // cheekbones, well developed but not protruding
+  m *= 1 + 0.060 * Math.pow(1 - Math.abs(sn), 2)
+             * smoothstep(0.10, 0.30, u) * smoothstep(0.72, 0.44, u);
+  // the sinus swelling that gives the muzzle its blocky top
+  m *= 1 + 0.028 * Math.max(0, sn) * smoothstep(0.52, 0.78, u);
+  return m;
+};
+part(() => loft(
+  [[0,0.972,0.398],[0,0.986,0.470],[0,0.978,0.545],[0,0.956,0.590],
+   [0,0.944,0.632],[0,0.940,0.676],[0,0.938,0.712]],
+  [[0.092,0.106],[0.107,0.116],[0.102,0.108],[0.082,0.094],
+   [0.070,0.080],[0.065,0.073],[0.060,0.067]],
+  [B.head,B.head,B.head,B.head,B.head,B.head,B.head],
+  { seg:26, sub:4, fur: headFur, shape: headShape }
+));
+/* massive lower jaw and chin */
+part(() => sphere(0, 0.906, 0.630, 0.064, 0.038, 0.084, B.head, null, 0, 16, 0.013));
+part(() => sphere(0, 0.916, 0.686, 0.035, 0.025, 0.024, B.head, null, 0, 12, 0.010));
+/* brow ridges over the eyes */
+part(() => sphere( 0.078, 1.036, 0.532, 0.036, 0.021, 0.036, B.head, null, 0, 12, 0.016));
+part(() => sphere(-0.078, 1.036, 0.532, 0.036, 0.021, 0.036, B.head, null, 0, 12, 0.016));
+/* tight lips, folding at the corner */
+function lip(sx){
+  loft(
+    [[sx*0.074,0.928,0.572],[sx*0.066,0.918,0.620],[sx*0.052,0.912,0.664],
+     [sx*0.031,0.912,0.698],[sx*0.010,0.914,0.722]],
+    [[0.016,0.013],[0.015,0.012],[0.014,0.011],[0.012,0.010],[0.009,0.008]],
+    [B.head,B.head,B.head,B.head,B.head],
+    { seg:9, sub:2, fur:0.005, color:[0.052,0.044,0.043] }
+  );
+}
+part(() => lip( 1));
+part(() => lip(-1));
+
+/* ---- legs: heavy bone, small compact feet ------------------------------- */
+function frontLeg(sx, bu, bl, bp){
+  loft(
+    [[sx*0.096,0.592,0.220],[sx*0.115,0.332,0.178],[sx*0.115,0.142,0.206],
+     [sx*0.117,0.046,0.224],[sx*0.119,0.024,0.264]],
+    [[0.090,0.104],[0.072,0.084],[0.050,0.058],[0.049,0.047],[0.049,0.033]],
+    [bu,bl,bp,bp,bp],
+    { seg:13, sub:3, capLen:0.20, fur: frontLegFur, forceW:{0:{b:B.chest,w:0.85}} }
+  );
+}
+function hindLeg(sx, bu, bl, bp){
+  loft(
+    [[sx*0.108,0.606,-0.296],[sx*0.130,0.342,-0.346],[sx*0.130,0.172,-0.244],
+     [sx*0.130,0.046,-0.260],[sx*0.132,0.024,-0.298]],
+    [[0.120,0.150],[0.086,0.108],[0.050,0.058],[0.049,0.047],[0.049,0.033]],
+    [bu,bl,bp,bp,bp],
+    { seg:13, sub:3, capLen:0.20, fur: hindLegFur, forceW:{0:{b:B.root,w:0.85}} }
+  );
+}
+part(() => frontLeg( 1, B.FLu, B.FLl, B.FLp));
+part(() => frontLeg(-1, B.FRu, B.FRl, B.FRp));
+part(() => hindLeg ( 1, B.BLu, B.BLl, B.BLp));
+part(() => hindLeg (-1, B.BRu, B.BRl, B.BRp));
+
+/* ---- tail: thick and plumed, curled tight over the back ----------------- */
+part(() => loft(
+  [[0,0.672,-0.356],[0,0.812,-0.424],[0,0.948,-0.406],[0,1.010,-0.298],
+   [0,0.986,-0.196],[0,0.902,-0.156]],
+  [[0.052,0.056],[0.056,0.060],[0.053,0.056],[0.046,0.048],
+   [0.036,0.037],[0.021,0.021]],
+  [B.tail0,B.tail0,B.tail1,B.tail2,B.tail3,B.tail3],
+  { seg:12, sub:3, capLen:0.22, fur: 0.062 }
+));
+
+/* ---- ears: small triangular drops, set high, lying against the skull ----- */
+function ear(sx, b){
+  loft(
+    [[sx*0.110,1.018,0.480],[sx*0.130,0.972,0.498],[sx*0.142,0.928,0.516],[sx*0.146,0.902,0.524]],
+    [[0.050,0.018],[0.058,0.016],[0.045,0.012],[0.015,0.008]],
+    [b,b,b,b],
+    { seg:12, sub:3, upRef:[1,0,0], capLen:0.25, fur:0.020, forceW:{0:{b:B.head,w:0.9}} }
+  );
+}
+part(() => ear( 1, B.earL));
+part(() => ear(-1, B.earR));
+
+/* ---- face details -------------------------------------------------------- */
+/* small, neat, triangular nose with open nostrils */
+part(() => sphere(0, 0.940, 0.730, 0.036, 0.031, 0.023, B.head, [0.055,0.047,0.049], 1.0, 16));
+part(() => sphere( 0.0165, 0.9345, 0.7440, 0.0105, 0.0094, 0.0080, B.head, [0.012,0.010,0.011], 0.0, 8));
+part(() => sphere(-0.0165, 0.9345, 0.7440, 0.0105, 0.0094, 0.0080, B.head, [0.012,0.010,0.011], 0.0, 8));
+
+/* eyes: oval, set obliquely and wide apart, with a real iris and pupil */
+function eyeball(sx){
+  const cx = sx*0.088, cy = 1.010, cz = 0.558;
+  const rx = 0.0278, ry = 0.0256, rz = 0.0244;
+  const fx = sx*0.46, fy = 0.12, fz = 0.88;
+  const fl = Math.hypot(fx, fy, fz);
+  const f = [fx/fl, fy/fl, fz/fl];
+  // a frame around the gaze axis, so the iris can carry radial fibres
+  let rt = cross3([0,1,0], f); rt = norm3(rt);
+  const up2 = cross3(f, rt);
+  const seg = 28, rings = 26, base = P.length/3;
+  curFur = 0;
+  for (let j=0;j<=rings;j++){
+    const v = j/rings*Math.PI, sv = Math.sin(v), cv = Math.cos(v);
+    for (let i=0;i<seg;i++){
+      const u = i/seg*T;
+      const dx = sv*Math.cos(u), dy = cv, dz = sv*Math.sin(u);
+      const k = dx*f[0] + dy*f[1] + dz*f[2];
+      let col;
+      if (k > 0.86)     col = [0.014,0.012,0.012];                    // pupil
+      else if (k > 0.575) {                                            // iris
+        const t = clamp((k-0.575)/0.330, 0, 1);
+        // fibres running out from the pupil
+        const a = Math.atan2(dx*up2[0]+dy*up2[1]+dz*up2[2],
+                             dx*rt[0] +dy*rt[1] +dz*rt[2]);
+        const fib = 0.5 + 0.5*Math.sin(a*34 + vnoise(a*7+3, t*11)*7.5);
+        const shade = (0.92 + 0.30*fib) * (0.90 + 0.22*vnoise(a*13+9, t*19+2));
+        col = [lerp(0.260,0.105,t)*shade, lerp(0.160,0.055,t)*shade, lerp(0.065,0.024,t)*shade];
+        // limbal ring: the dark band at the outer edge of the iris
+        const limb = smoothstep(0.72, 0.60, k);
+        for (let q=0;q<3;q++) col[q] = lerp(col[q], 0.038, limb*0.45);
+      } else col = [0.120,0.104,0.098];                                // little sclera shows
+      pushVert(cx + rx*dx, cy + ry*dy, cz + rz*dz, [B.head,0,0,0], [1,0,0,0], 1.0, col);
     }
   }
-  for(let r=0;r<ringCount-1;r++)for(let i=0;i<seg;i++){
-    const a=base+r*seg+i,b=base+r*seg+(i+1)%seg,c=a+seg,d=b+seg;
-    IDX.push(a,c,b,b,c,d);
+  for (let j=0;j<rings;j++)
+    for (let i=0;i<seg;i++){
+      const a = base + j*seg + i, b = base + j*seg + (i+1)%seg;
+      IDX.push(a, a+seg, b); IDX.push(b, a+seg, b+seg);
+    }
+}
+part(() => eyeball( 1));
+part(() => eyeball(-1));
+/* the raised whisker pads either side of the muzzle */
+part(() => sphere( 0.050, 0.936, 0.688, 0.030, 0.025, 0.034, B.head, null, 0, 12, 0.009));
+part(() => sphere(-0.050, 0.936, 0.688, 0.030, 0.025, 0.034, B.head, null, 0, 12, 0.009));
+/* a lower lid, so the eye sits in a socket instead of on the skull */
+part(() => sphere( 0.086, 0.9880, 0.5590, 0.0310, 0.0135, 0.0155, B.head, [0.052,0.042,0.038], 0.1, 12, 0.006));
+part(() => sphere(-0.086, 0.9880, 0.5590, 0.0310, 0.0135, 0.0155, B.head, [0.052,0.042,0.038], 0.1, 12, 0.006));
+/* the ear canal, a dark note where the leather meets the skull */
+part(() => sphere( 0.098, 1.008, 0.490, 0.019, 0.023, 0.015, B.head, [0.030,0.023,0.021], 0.0, 10, 0.004));
+part(() => sphere(-0.098, 1.008, 0.490, 0.019, 0.023, 0.015, B.head, [0.030,0.023,0.021], 0.0, 10, 0.004));
+
+/* dry, close-fitting eyelids read as a dark rim around the eye */
+part(() => sphere( 0.088, 1.0085, 0.5545, 0.0345, 0.0322, 0.0150, B.head, [0.030,0.025,0.024], 0.2, 16, 0.004));
+part(() => sphere(-0.088, 1.0085, 0.5545, 0.0345, 0.0322, 0.0150, B.head, [0.030,0.025,0.024], 0.2, 16, 0.004));
+
+/* ---- head scale ----------------------------------------------------------
+   A Bankhar is "bavgar" — bear-like — and the head has to carry that against a
+   body wearing 10 cm of coat. Scaling by skin weight keeps the neck junction
+   continuous instead of leaving a step where the skull meets the ruff. */
+(function(){
+  const k = 1.17, ox = 0, oy = 0.952, oz = 0.398;
+  for (let v=0; v<P.length/3; v++){
+    let w = 0;
+    for (let j=0;j<4;j++){
+      const b = BI[v*4+j];
+      if (b === B.head || b === B.earL || b === B.earR) w += BW[v*4+j];
+    }
+    if (w < 0.001) continue;
+    const sc = 1 + (k-1)*w;
+    P[v*3]   = ox + (P[v*3]  -ox)*sc;
+    P[v*3+1] = oy + (P[v*3+1]-oy)*sc;
+    P[v*3+2] = oz + (P[v*3+2]-oz)*sc;
+    FUR[v]  *= sc;
   }
-  for(let i=1;i<seg-1;i++){
-    IDX.push(base,base+i,base+i+1);
-    const e=base+(ringCount-1)*seg;IDX.push(e,e+i+1,e+i);
+  for (const nm of ['head','earL','earR']){
+    const b = bones[B[nm]];
+    b.rest = [ox + (b.rest[0]-ox)*k, oy + (b.rest[1]-oy)*k, oz + (b.rest[2]-oz)*k];
   }
-}
-part(()=>sectionSkin([
-  [-0.488,0.004,0.643,0.627],[-0.46,0.055,0.70,0.57],[-0.39,0.116,0.777,0.49],
-  [-0.29,0.135,0.790,0.461],[-0.18,0.121,0.793,0.468],
-  [-0.05,0.139,0.795,0.450],[0.09,0.153,0.80,0.420],
-  [0.21,0.150,0.795,0.420],[0.30,0.126,0.76,0.448],
-  [0.36,0.056,0.67,0.47],[0.389,0.004,0.581,0.566]
-],[B.root,B.root,B.root,B.root,B.spine,B.spine,B.chest,B.chest,B.chest,B.chest,B.chest],{fur:torsoFur}));
-
-part(()=>loft(
-  [[0,0.65,0.16],[0,0.76,0.27],[0,0.86,0.34],[0,0.94,0.39],[0,0.974,0.43]],
-  [[0.125,0.125],[0.120,0.130],[0.106,0.127],[0.093,0.111],[0.086,0.099]],
-  [B.chest,B.neck,B.neck,B.head,B.head],
-  {seg:26,sub:4,capStart:true,capLen:0.30,capEnd:false,fur:neckFur}));
-
-part(()=>sectionSkin([
-  [0.357,0.078,1.048,0.884],[0.405,0.112,1.095,0.871],
-  [0.461,0.133,1.116,0.868],[0.510,0.130,1.105,0.869],
-  [0.549,0.112,1.074,0.878],[0.575,0.088,1.017,0.887],
-  [0.608,0.073,0.991,0.897],[0.651,0.057,0.980,0.909],
-  [0.690,0.043,0.973,0.922],[0.699,0.034,0.965,0.930]
-],Array(10).fill(B.head),{head:true,square:0.87,seg:48,sub:5,fur:headFur}));
-// The ventral skull contour carries the jaw; only the fine mouth seam is separate.
-function lip(sx){
-  loft([[sx*0.079,0.918,0.581],[sx*0.068,0.921,0.605],
-    [sx*0.057,0.928,0.637],[sx*0.042,0.934,0.672],[sx*0.014,0.938,0.698]],
-    [[0.0025,0.0025],[0.0025,0.002],[0.002,0.002],[0.002,0.002],[0.0015,0.0015]],
-    Array(5).fill(B.head),{seg:8,sub:3,fur:0,color:[0.018,0.013,0.012]});
-}
-part(()=>lip(1));part(()=>lip(-1));
-
-// Scapula to elbow to carpus: slender distal bones, blended shoulder roots.
-function frontLeg(sx,bu,bl,bp){
-  loft([[sx*0.101,0.625,0.204],[sx*0.126,0.491,0.186],
-    [sx*0.121,0.332,0.178],[sx*0.119,0.222,0.195],
-    [sx*0.119,0.142,0.206],[sx*0.119,0.060,0.219]],
-    [[0.070,0.085],[0.056,0.070],[0.037,0.044],[0.028,0.034],[0.027,0.029],[0.030,0.033]],
-    [bu,bu,bl,bl,bp,bp],{continuousFrame:true,seg:18,sub:4,capLen:0.12,fur:frontLegFur,forceW:{0:{b:B.chest,w:0.88}}});
-}
-function hindLeg(sx,bu,bl,bp){
-  loft([[sx*0.106,0.636,-0.305],[sx*0.128,0.493,-0.242],
-    [sx*0.130,0.342,-0.225],[sx*0.130,0.247,-0.300],
-    [sx*0.130,0.172,-0.355],[sx*0.130,0.061,-0.340]],
-    [[0.084,0.106],[0.068,0.087],[0.042,0.047],[0.029,0.033],[0.025,0.028],[0.027,0.030]],
-    [bu,bu,bl,bl,bp,bp],{continuousFrame:true,seg:18,sub:4,capLen:0.12,fur:hindLegFur,forceW:{0:{b:B.root,w:0.86}}});
-}
-part(()=>frontLeg(1,B.FLu,B.FLl,B.FLp));part(()=>frontLeg(-1,B.FRu,B.FRl,B.FRp));
-part(()=>hindLeg(1,B.BLu,B.BLl,B.BLp));part(()=>hindLeg(-1,B.BRu,B.BRl,B.BRp));
-const pawParts=[];
-function paw(x,z,b){
-  const start=P.length/3;
-  sphere(x,0.040,z,0.041,0.031,0.054,b,[0.175,0.103,0.060],0,18,0.004);
-  for(let i=0;i<4;i++){
-    const dx=(i-1.5)*0.019,advance=(i===1||i===2)?0.008:0;
-    sphere(x+dx,0.023,z+0.035+advance,0.0118,0.019,0.026,b,[0.205,0.126,0.076],0,12,0.003);
-    sphere(x+dx,0.018,z+0.058+advance,0.0042,0.005,0.010,b,[0.046,0.039,0.033],0.35,10,0);
+  for (const b of bones){
+    const par = b.parent >= 0 ? bones[b.parent].rest : [0,0,0];
+    b.off = [b.rest[0]-par[0], b.rest[1]-par[1], b.rest[2]-par[2]];
   }
-  pawParts.push({bone:b,v0:start,v1:P.length/3});
-}
-part(()=>paw(0.119,0.237,B.FLp));part(()=>paw(-0.119,0.237,B.FRp));
-part(()=>paw(0.130,-0.324,B.BLp));part(()=>paw(-0.130,-0.324,B.BRp));
-
-part(()=>loft(
-  [[0,0.687,-0.389],[0,0.812,-0.424],[0,0.948,-0.406],[0,1.010,-0.298],[0,0.986,-0.196],[0,0.915,-0.164]],
-  [[0.037,0.041],[0.039,0.043],[0.036,0.039],[0.030,0.033],[0.023,0.025],[0.009,0.012]],
-  [B.tail0,B.tail0,B.tail1,B.tail2,B.tail3,B.tail3],{seg:18,sub:4,capLen:0.25,fur:0.064}));
-
-// Thin folded triangular leather: broad attachment, a soft forward fold,
-// then a tapered drop. Width is along the skull's front/back axis.
-function ear(sx,b){
-  loft([[sx*0.096,1.054,0.456],[sx*0.129,1.025,0.468],
-    [sx*0.145,0.982,0.490],[sx*0.145,0.935,0.510],[sx*0.132,0.912,0.517]],
-    [[0.038,0.011],[0.049,0.013],[0.036,0.009],[0.020,0.006],[0.003,0.003]],
-    [b,b,b,b,b],{seg:18,sub:4,upRef:[1,0,0],capLen:0.1,fur:0.010,forceW:{0:{b:B.head,w:0.95}}});
-}
-part(()=>ear(1,B.earL));part(()=>ear(-1,B.earR));
-
-// Nose leather is a dorsally broad, ventrally pinched wedge, not a ball.
-part(()=>sectionSkin([
-  [0.680,0.031,0.973,0.938],[0.703,0.039,0.976,0.931],
-  [0.719,0.035,0.970,0.934],[0.725,0.023,0.960,0.940]
-],Array(4).fill(B.head),{nose:true,square:0.69,seg:36,sub:3,shine:0.72,color:[0.018,0.020,0.022]}));
-// Inset nostril basins framed by the alar rims. Dark depth remains visible
-// under direct sun, with a narrow slit curling out along each wing.
-for(const sx of [-1,1]){
-  part(()=>sphere(sx*0.023,0.948,0.724,0.0108,0.0065,0.0045,B.head,[0.003,0.003,0.004],0,16));
-  part(()=>loft([[sx*0.013,0.952,0.722],[sx*0.021,0.959,0.722],[sx*0.033,0.954,0.714],[sx*0.035,0.946,0.708]],
-    Array(4).fill([0.0022,0.0022]),Array(4).fill(B.head),{seg:8,sub:3,shine:0.65,color:[0.023,0.024,0.026],fur:0}));
-}
-part(()=>loft([[0,0.945,0.724],[0,0.934,0.713],[0,0.926,0.702]],Array(3).fill([0.0015,0.0015]),Array(3).fill(B.head),{seg:8,sub:3,fur:0,color:[0.008,0.006,0.007]}));
-
-// Only the almond-shaped corneal window is visible. Its thin concentric
-// surface includes dark iris fibres and pupil; there is no exposed globe.
-const eyeParts=[];
-function eye(sx){
-  const center=[sx*0.104,1.031,0.558],f=norm3([sx*0.55,0.06,0.83]);
-  const rt=norm3([f[2],0,-f[0]]),up=norm3(cross3(f,rt));
-  const seg=40,rings=7,base=P.length/3;curFur=0;
-  function at(th,r,bulge=0){
-    const u=Math.cos(th)*0.023*r,v=Math.sin(th)*Math.pow(Math.abs(Math.sin(th)),0.28)*0.0105*r+sx*u*0.10;
-    return center.map((c,j)=>c+rt[j]*u+up[j]*v+f[j]*(0.0040*(1-r*r)+bulge));
-  }
-  for(let j=0;j<=rings;j++)for(let i=0;i<seg;i++){
-    const r=j/rings,th=i/seg*T,q=at(th,r);
-    const pupil=r<0.48,edge=smoothstep(0.78,1,r),fib=0.9+0.10*Math.sin(th*31);
-    const c=pupil?[0.004,0.003,0.003]:[0.059*fib,0.032*fib,0.015*fib].map(v=>lerp(v,0.009,edge));
-    pushVert(...q,[B.head,0,0,0],[1,0,0,0],1,c);
-  }
-  for(let j=0;j<rings;j++)for(let i=0;i<seg;i++){
-    const a=base+j*seg+i,b=base+j*seg+(i+1)%seg;IDX.push(a,a+seg,b,b,a+seg,b+seg);
-  }
-  // Socket rim follows the almond exactly, with a heavier upper lid.
-  const path=[],radii=[];
-  for(let i=0;i<=32;i++){
-    const th=i/32*T;path.push(at(th,1,0.0005));const r=Math.sin(th)>0?0.0022:0.0015;radii.push([r,r]);
-  }
-  loft(path,radii,Array(33).fill(B.head),{seg:8,sub:1,capStart:false,capEnd:false,fur:0,color:[0.015,0.012,0.011]});
-  eyeParts.push({v0:base,v1:base+(rings+1)*seg});
-}
-part(()=>eye(1));part(()=>eye(-1));
-// Submillimetre sky glints, set just above the dark pupil on the cornea.
-for(const sx of [-1,1])part(()=>sphere(sx*0.106-0.002,1.0345,0.562,
-  0.00115,0.00085,0.00075,B.head,[0.36,0.39,0.42],1,10));
-
-// Shared anatomical rest transformation: extend the legs while retaining the
-// ground-level pads. Vertices AND joint binds receive the same displacement.
-const statureY=y=>y+0.16*smoothstep(0.06,0.60,y);
-function cervicalDrop(b,y){
-  return b===B.head||b===B.earL||b===B.earR?1:b===B.neck?smoothstep(0.72,0.95,y):0;
-}
-for(let v=0;v<P.length/3;v++){
-  const y=P[v*3+1];let w=0;
-  for(let j=0;j<4;j++)w+=BW[v*4+j]*cervicalDrop(BI[v*4+j],y);
-  P[v*3+1]=statureY(y)-0.12*w;P[v*3+2]+=0.035*w;
-}
-bones[B.earL].rest=[0.096,1.054,0.456];bones[B.earR].rest=[-0.096,1.054,0.456];
-for(let i=0;i<bones.length;i++){
-  const b=bones[i],w=cervicalDrop(i,b.rest[1]);
-  b.rest[1]=statureY(b.rest[1])-0.12*w;b.rest[2]+=0.035*w;
-}
-for(const b of bones){
-  const par=b.parent>=0?bones[b.parent].rest:[0,0,0];
-  b.off=b.rest.map((v,i)=>v-par[i]);
-}
+})();
 
 /* ---- normals (orientation resolved per part) ---------------------------- */
 (function(){
@@ -1790,8 +1844,8 @@ const strandVao = gl.createVertexArray();
         k++;
       }
     };
-    take(pads,  12, 0.024, 0.047);
-    take(brows,  4, 0.016, 0.028);
+    take(pads,  24, 0.045, 0.085);
+    take(brows,  6, 0.030, 0.055);
   })();
 
   for (let i=0;i<N && k<NX;i++){
@@ -1816,32 +1870,19 @@ const strandVao = gl.createVertexArray();
 
     root[k*3]=px; root[k*3+1]=py; root[k*3+2]=pz;
     nrm[k*3]=nx;  nrm[k*3+1]=ny;  nrm[k*3+2]=nz;
-    const hc = [0,1,2].map(j=>C[a*4+j]*w0+C[b*4+j]*w1+C[c*4+j]*w2);
-    const grain=markGrain(px,py,pz)-0.5;
-    const ta=smoothstep(0.25,0.75,MK[a*2]*w0+MK[b*2]*w1+MK[c*2]*w2+grain*0.16);
-    const ca=smoothstep(0.45,0.55,MK[a*2+1]*w0+MK[b*2+1]*w1+MK[c*2+1]*w2+grain*0.16);
-    // Match the short-face skin pigment so guard hairs do not sparkle orange.
-    const facePoint=smoothstep(0.52,0.60,pz)*0.85,mahogany=[0.122,0.068,0.041];
-    for(let j=0;j<3;j++)hc[j]=lerp(lerp(hc[j],lerp(TAN[j],mahogany[j],facePoint),ta),CREAM[j],ca);
+    const hc = markedColor([px, py, pz]);
     col[k*3] = hc[0]; col[k*3+1] = hc[1]; col[k*3+2] = hc[2];
 
     // hairs gather into tufts: neighbours share a clump direction
-    const cl = 0.25;
-    par[k*4]   = fur * (0.85 + 0.25*rnd());
+    const cl = 1.05;
+    par[k*4]   = fur * (0.60 + 0.62*rnd());
     par[k*4+1] = rnd();
     par[k*4+2] = (vnoise(px*11 + 11, pz*11 + py*8) - 0.5) * cl;
     par[k*4+3] = (vnoise(pz*11 + 57, px*11 + py*9) - 0.5) * cl;
 
-    // Interpolate the same bone field as the skin; nearest-corner weights
-    // tear hair roots away from the surface when an elbow or shoulder bends.
-    const weights=new Map();
-    for(const [v,w] of [[a,w0],[b,w1],[c,w2]])for(let j=0;j<4;j++){
-      const id=BI[v*4+j],amount=BW[v*4+j]*w;
-      if(amount>0)weights.set(id,(weights.get(id)||0)+amount);
-    }
-    const blend=[...weights].sort((a,b)=>b[1]-a[1]).slice(0,4);
-    const sum=blend.reduce((n,p)=>n+p[1],0);
-    blend.forEach(([id,w],j)=>{bi[k*4+j]=id;bw[k*4+j]=w/sum;});
+    // take the skinning of whichever corner this follicle sits closest to
+    const src = (w0 >= w1 && w0 >= w2) ? a : (w1 >= w2 ? b : c);
+    for (let j=0;j<4;j++){ bi[k*4+j] = BI[src*4+j]; bw[k*4+j] = BW[src*4+j]; }
     k++;
   }
   strandCount = k;
@@ -2426,8 +2467,8 @@ function animate(dt){
       bp.rx = (-up*0.55 - lo*0.55) - 0.03 - squash*0.14;
     } else {
       bu.rx = up - 0.02 - squash*0.20;
-      bl.rx = lo + 0.05 + squash*0.34;            // stifle
-      bp.rx = (-lo*0.95 - up*0.55) - 0.05 - squash*0.24;   // hock
+      bl.rx = -lo - 0.05 - squash*0.34;            // stifle
+      bp.rx = (lo*0.95 + up*0.30) + 0.07 + squash*0.40;   // hock
     }
     // slight outward splay so the legs don't intersect the body
     const side = (L.u === B.FLu || L.u === B.BLu) ? 1 : -1;
@@ -2480,12 +2521,12 @@ function animate(dt){
   // the landing, then a nod as the weight arrives
   const airHead = (wLaunch*(-0.34) + wApex*(-0.06) + wLand*(0.22)) * dog.airBlend
                 + dog.crouchK*0.16 + landDip*0.13;
-  bones[B.neck].rx = dog.headPitch - 0.055 - smoothstep(3,12,sp)*0.10 + neckBob + airHead
+  bones[B.neck].rx = dog.headPitch - 0.24 - smoothstep(3,12,sp)*0.10 + neckBob + airHead
                    + curl*0.62;                // the head tucks under first
   bones[B.neck].ry = dog.headYaw*0.55 + neckYaw;
   bones[B.neck].rz = dog.turn*0.10 + Math.sin(T*t + 1.9)*0.030*amp;
   // the head lags the neck, which is what reads as weight
-  bones[B.head].rx = curl*0.40 - dog.headPitch*0.35 + 0.025 - neckBob*0.55
+  bones[B.head].rx = curl*0.40 - dog.headPitch*0.35 + 0.06 - neckBob*0.55
                    + Math.sin(T*t - 0.55) * gait * 0.42 * amp;
   bones[B.head].ry = dog.headYaw*0.75 - neckYaw*0.70 + Math.sin(T*t + 0.75)*0.030*amp + Math.sin(timeNow*0.37)*0.13*(1-amp);
   bones[B.head].rz = -dog.turn*0.16 + Math.sin(T*t + 2.55)*0.045*amp;
@@ -2563,7 +2604,7 @@ function animate(dt){
   if (dog.rollT > 0 || dog.rollLift > 0.0005){
     // the same chain the model matrix applies: pivot spin, then lean, then the
     // terrain pitch — anything less and a slope puts the body underground
-    const hc = 0.74;
+    const hc = 0.58;
     const cs = Math.cos(dog.rollSpin),        sn = Math.sin(dog.rollSpin);
     const cz = Math.cos(dog.roll + dog.lean), sz = Math.sin(dog.roll + dog.lean);
     const cp = Math.cos(dog.pitch),           sp2 = Math.sin(dog.pitch);
@@ -2606,73 +2647,6 @@ function animate(dt){
 
   dog.groundY = damp(dog.groundY, gh + bodyY - 0.03, 26, dt);
   dog.y = dog.groundY + dog.air - landDip*0.090 - dog.crouchK*0.070 + dog.rollLift;
-  placeFeet(g,amp);
-}
-
-// Solve the existing two-segment limb against the actual terrain. This uses
-// the revised bind lengths, so a taller mesh cannot leave the old short rig
-// dangling above the ground. Swing and airborne poses keep their animation.
-function placeFeet(g,amp){
-  if(!dog.grounded || dog.rollBlend>0.04 || dog.rollLift>0.015)return;
-  buildModelMatrix();
-  const modelInv=m4();m4inv(modelInv,matModel);
-  const point=(m,p)=>[m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12],m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13],m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]];
-  const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
-  for(const L of limbs){
-    const u=(dog.phase+L.ph)%1;
-    let support=1-amp+amp*(1-smoothstep(g.duty-0.045,g.duty+0.045,u));
-    const pad=pawParts.find(p=>p.bone===L.p),skin=bones[L.p].skin;
-    // Catch a low swing toe as well as scheduled stance contacts.
-    let gap=Infinity;
-    for(let v=pad.v0;v<pad.v1;v+=12){
-      const q=point(matModel,point(skin,[P[v*3],P[v*3+1],P[v*3+2]]));
-      gap=Math.min(gap,q[1]-terrainH(q[0],q[2]));
-    }
-    if(gap<0.003)support=1;
-    L.contact=support>0.5;
-    if(support<0.001)continue;
-    const upper=bones[L.u],lower=bones[L.l],foot=bones[L.p];
-    const world=point(matModel,[foot.world[12],foot.world[13],foot.world[14]]);
-    world[1]=terrainH(world[0],world[2])+foot.rest[1]-0.001;
-    const inv=m4();m4inv(inv,bones[upper.parent].world);
-    const target=point(inv,point(modelInv,world)).map((v,j)=>v-upper.off[j]);
-    const a=lower.off,b=foot.off,l1=Math.hypot(a[1],a[2]),l2=Math.hypot(b[1],b[2]);
-    // Shorten an over-reaching stance along the ground instead of solving
-    // an unreachable triangle and leaving its paw suspended in the air.
-    const maxZ=Math.sqrt(Math.max(0.000001,(l1+l2-0.001)**2-target[1]**2));
-    target[2]=clamp(target[2],-maxZ,maxZ);
-    const d=clamp(Math.hypot(target[1],target[2]),Math.abs(l1-l2)+0.0001,l1+l2-0.0001);
-    const angle=Math.atan2(target[2],target[1]),bend=Math.acos(clamp((l1*l1+d*d-l2*l2)/(2*l1*d),-1,1));
-    let best=null,score=Infinity;
-    for(const sign of [-1,1]){
-      const q1=wrap(angle+sign*bend-Math.atan2(a[2],a[1]));
-      const ky=Math.cos(q1)*a[1]-Math.sin(q1)*a[2],kz=Math.sin(q1)*a[1]+Math.cos(q1)*a[2];
-      const q2=wrap(Math.atan2(target[2]-kz,target[1]-ky)-Math.atan2(b[2],b[1])-q1);
-      const cost=wrap(q1-upper.rx)**2+wrap(q2-lower.rx)**2;
-      if(cost<score){score=cost;best=[q1,q2];}
-    }
-    upper.rx+=wrap(best[0]-upper.rx)*support;
-    lower.rx+=wrap(best[1]-lower.rx)*support;
-    let pitch=0,roll=0;
-    for(let b=lower;b;b=b.parent>=0?bones[b.parent]:null){pitch+=b.rx;roll+=b.rz;}
-    foot.rx=lerp(foot.rx,-pitch,support);
-    foot.rz=-roll*support;
-  }
-  updateSkeleton();
-  // During support, settle the body on the lowest real pad. Spine flexion
-  // can put the shoulder beyond a limb's reach; this closes that residual
-  // without stretching the bind lengths or moving the dog horizontally.
-  if(limbs.some(l=>l.contact)){
-    let lowest=Infinity;
-    for(const pad of pawParts){
-      const skin=bones[pad.bone].skin;
-      for(let v=pad.v0;v<pad.v1;v+=6){
-        const q=point(matModel,point(skin,[P[v*3],P[v*3+1],P[v*3+2]]));
-        lowest=Math.min(lowest,q[1]-terrainH(q[0],q[2]));
-      }
-    }
-    dog.y+=clamp(0.003-lowest,-0.12,0.08);
-  }
 }
 
 /* ============================================================== camera ==== */
@@ -2742,7 +2716,7 @@ function buildModelMatrix(){
   m4mul(matModel, matModel, m4rotZ(a, dog.roll + dog.lean));
   if (dog.rollSpin !== 0){
     // turn about the chest, not about the feet
-    const hc = 0.74;
+    const hc = 0.58;
     m4mul(matModel, matModel, m4trans(a, 0, hc, 0));
     m4mul(matModel, matModel, m4rotX(b, dog.rollSpin));
     m4mul(matModel, matModel, m4trans(a, 0, -hc, 0));

@@ -6,6 +6,7 @@ A self-contained, playable WebGL 2 landscape and Mongolian Bankhar guardian dog.
 
 - Play: https://dev.gaiahead.com/bankhar-steppe/
 - Ultra: https://dev.gaiahead.com/bankhar-steppe/?quality=ultra
+- Previous animal model with the same hands-off controls: https://dev.gaiahead.com/bankhar-steppe/before-model.html
 - Original: https://dev.gaiahead.com/bankhar-steppe/original.html
 - Repository: https://github.com/gaiahead/bankhar-steppe
 
@@ -14,7 +15,7 @@ Implementation used Codex CLI with `gpt-6-astra` and `high` reasoning. The origi
 ## What changed
 
 - A stationary three-quarter opening frames the animal, foreground grass, cart track, gers, and layered mountain ranges. Starting movement gradually brings the camera behind the dog.
-- The original lofted, skinned Bankhar remains: broad modeled head, eyes, muzzle, four articulated legs, mane, curled tail, surface detail, shell undercoat, and individual ribbon hairs. Finer guard hairs, warmer tan markings, softer highlights, cool sky reflection, and shorter whiskers improve coat readability.
+- The procedural Bankhar has been re-authored with an integrated skull/muzzle/jaw, smaller almond eye openings, folded ears, an athletic torso, articulated long legs and four detailed paws. Region-aware shell/strand grooming differentiates face, neck, body and tail. See **Procedural anatomy redesign** below for changes and remaining limitations.
 - Three continuous rings of actual mountain geometry provide overlapping slate silhouettes and shaded ridges. Distance fog blends terrain and mountains into the procedural sky.
 - Taller, curved grass ribbons use five segments, wind gusts, species variation, dry tips, distance LOD, track suppression, and interaction bending around the dog. A deterministic shuffle distributes every quality budget across the whole field.
 - Procedural ground relief, tiny stones, flowers, seed heads, scattered outcrops, three detailed felt gers, eight sheep, and a stone ovoo with a blue khadag add local detail. The landscape remains open.
@@ -28,8 +29,8 @@ Implementation used Codex CLI with `gpt-6-astra` and `high` reasoning. The origi
 |---|---|
 | W / ↑ | Run; stays running until stopped |
 | S / ↓ | Stop |
-| Q | Sprint; stays sprinting until W or S |
-| A / D, ← / → | Steer |
+| Q / 질주 button | Start hands-off running around the local meadow; tap once, release, and watch |
+| A / D, ← / → | Take over steering and cancel hands-off running |
 | Space | Jump |
 | E | Forward roll |
 | Drag on landscape | Orbit |
@@ -40,9 +41,11 @@ Implementation used Codex CLI with `gpt-6-astra` and `high` reasoning. The origi
 | R | Reset position and opening camera |
 | Esc | Exit photo mode / close settings |
 
-Pause freezes the animal and wind. Photo mode also hides the HUD while allowing orbit and zoom, and restores the preceding pause state on exit. The small photo-mode exit control works on touch screens; use the **사진 저장** button inside photo mode to save on touch devices. Screenshot export does not force fullscreen.
+Hands-off running follows a broad, gently varying loop around the opening meadow with changing run/sprint speed and simple look-ahead steering around gers, the ovoo, and outcrops. Starting after a manual excursion steers back toward the meadow without teleporting. Q is an idempotent start, including key repeat. The desktop and mobile 질주 buttons show active state with `aria-pressed`. S / 정지 stops; W, steering keys, or the joystick cancel autonomy and take over. Orbit and zoom remain available while watching.
 
-On touch screens, push the left joystick upward to move and sideways to steer. Release to stop. The right controls provide jump, held sprint, roll, and stop. Pointer release, cancellation, lost capture, window blur, and document visibility changes clear inputs. Game keys ignore focused form controls. There is no sound.
+Pause freezes the animal and wind. Pause and photo mode cancel hands-off running and clear held pointers; exiting does not restart it. Press Q / 질주 again to restart (or W to run manually). An existing jump or roll can finish after resuming. Photo mode also hides the HUD while allowing orbit and zoom, and restores the preceding pause state on exit. The small photo-mode exit control works on touch screens; use the **사진 저장** button inside photo mode to save on touch devices. Screenshot export does not force fullscreen.
+
+On touch screens, push the left joystick upward to move and sideways to steer. Release to stop. The right controls provide jump, hands-off 질주, roll, and stop. Normal 질주 pointer release clears the held key while keeping autonomy active; the expected capture loss after release also leaves it active. Actual pointer cancellation or unexpected capture loss clears input and cancels autonomy. Window blur, document visibility changes, and reset also cancel it. Normal camera drag/release does not cancel autonomy. Game keys ignore focused form controls. There is no sound.
 
 ## Quality
 
@@ -55,6 +58,16 @@ On touch screens, push the left joystick upward to move and sideways to steer. R
 The full coat has approximately 120,000 individual hairs plus whiskers. Auto selects High on desktop and Low for narrow/coarse-pointer devices, and reevaluates on resize. Manually selected quality stays fixed, including on SwiftShader. Add `?quality=low`, `?quality=high`, or `?quality=ultra` to select an initial budget. Ultra adds 1.25× supersampling at DPR 1 to soften fine fur/grass, still capped at an effective DPR of 2. High and Low never exceed the device pixel ratio.
 
 Lighting offers afternoon, golden evening, and clear daylight presets. These change the actual sun direction, color, shadows, and scattering; they are not a simulated astronomical clock.
+
+## Procedural anatomy redesign
+
+The Bankhar now uses continuous cross-section surfaces for the skull, stop, tapered muzzle, ribcage, and abdominal tuck. Small almond eye openings, dark irises, thin lids, a wedge-shaped nose with nostril basins, folded ear leather, an integrated jaw and fine lip line, and four pads with toes and nails replace the former round appendages. The longer legs share their rest transformation with the skeleton; the hind stifle bends forward and the hock backward. Terrain-aware stance solving uses the actual bind lengths, with pad clearance and the existing rolling hull maintaining ground contact.
+
+Rest-space grooming separates short face/shin hair from neck, body, and tail feathering. Finer undercoat breakup, narrower guard hairs, stable curve tangents, muted tan points, and reduced coat glare keep the coat black in the existing sunlight. The landscape and autorun/control source are preserved. Ultra retains the same 120,000 coat-hair target, five shells, resolution limits, and shadow budget; the anatomical skin is approximately 33,000 triangles. No reference photograph, external texture, mesh, generation service, or runtime dependency is shipped. This is a substantial procedural model revision, **not photographic realism**: surface transitions, small facial details, and fur antialiasing still look synthetic close up.
+
+The final bounded appearance pass broadens the skull and forehead stop, integrates the lower jaw, and confines muted mahogany points to the lower muzzle beneath a black bridge. Recessed orbital planes, thin lids, curved dark-brown eye windows and small catchlights improve the face. Short directional surface detail and straighter torso guard hairs soften the smooth skin appearance. Aligned cross-section frames remove the limb skin twists that exposed pinched rear joints, without changing bone binds, skin weights, gait/IK, paw contacts, scenery, or controls.
+
+Final-pass validation: `node tests/model.cjs` and `npm run test:render` passed with unchanged assertions; all eight actual shader programs compiled/linked with no GL errors. The native opening and close-face renders were inspected. The model remains visibly stylized: the muzzle markings and eyelid transitions still look constructed, and fine coat hairs remain grainy at close range. Final browser review remains pending with the parent reviewer.
 
 ## Run
 
@@ -84,20 +97,26 @@ Additional checks:
 
 ```sh
 npm run test:static
+npm run test:model
+node tests/autorun.cjs
 npm run test:render
 ```
 
-`test:static` executes full procedural initialization and simulation against a small DOM/GL stub. It checks original preservation, deterministic geometry initialization, movement, jumps, rolls, quality, pause/reset/photo, and input cleanup. **It does not verify browser rendering.**
+`test:static` executes full procedural initialization and simulation against a small DOM/GL stub. It checks original preservation, deterministic geometry initialization, movement, jumps, rolls, quality, pause/reset/photo, and input cleanup. **It does not verify browser rendering.** It also simulates ten minutes of autonomous running and checks bounded radius, varied speed/yaw, continuous position/heading, return from a manual excursion, release versus cancellation, manual takeover, and pause/photo restart.
+
+`node tests/autorun.cjs` is the focused actual Playwright test for desktop start and real mobile touch down/up, continued movement and heading changes without further input, camera dragging, stop, key/joystick takeover, cancellation, capture loss, blur, reset, and pause/photo restart. It accepts `BANKHAR_URL`, `PLAYWRIGHT_MODULE`, and `CHROMIUM_PATH`. The final focused test passed in real Chromium/SwiftShader, including the desktop start button and mobile renderer. The parent also reran all five photo/Escape/WebGL edge checks on the final redesign with no errors.
+
+`test:model` injects test-only geometry access into the existing static harness. It checks finite mesh data, normalized weights, identity rest binds, eye size, four paws, hind-joint direction, idle/sprint/landing pad contact, rolling clearance, the immutable comparison snapshot, and unchanged landscape/autorun/control source. The native inspection views are written under `test-results/model-{three,face,front,side}/render.png`; they are actual application renders, not generated reference art. The parent reran these geometry/rig checks, inspected the final Ultra model in real Chromium with zero JavaScript/WebGL errors, and reran the autonomous-control and photo-mode regressions. The full pre-existing smoke suite is recorded separately below as prior-version coverage, not as a new full-suite pass.
 
 `test:render` is an optional Linux verification using Mesa EGL/OpenGL ES, Python 3, and Pillow. It records the application's actual GL commands at Ultra, compiles and links its actual shaders, replays mesh and texture uploads and three frames, checks GL errors, and writes `test-results/native/render.png` plus `report.json`. This verifies native GLES output, independently of the stub; **it does not verify browser DOM, CSS, events, or SwiftShader compatibility.**
 
-Delivery validation: the final Chromium/SwiftShader smoke suite passed all 27 checks, including desktop gameplay and mobile multi-touch. A further 5 real-browser edge checks passed for focused-control Escape behavior, photo-button PNG export, WebGL errors, and the explicit unavailable-WebGL fallback. Static simulation checks also passed. Native Mesa llvmpipe compiled/linked all 8 actual shader programs and replayed 804 real GL commands with no GL errors. Final desktop Ultra and portrait screenshots were inspected. These are functional/rendering checks, not a hardware-GPU FPS benchmark. Real iOS/Android devices and Safari/Firefox have not been tested.
+Prior scene delivery validation (before the hands-off running change): the Chromium/SwiftShader smoke suite passed all 27 checks, including desktop gameplay and mobile multi-touch. A further 5 real-browser edge checks passed for focused-control Escape behavior, photo-button PNG export, WebGL errors, and the explicit unavailable-WebGL fallback. Static simulation checks also passed. Native Mesa llvmpipe compiled/linked all 8 actual shader programs and replayed 804 real GL commands with no GL errors. Final desktop Ultra and portrait screenshots were inspected. These are functional/rendering checks, not a hardware-GPU FPS benchmark. Real iOS/Android devices and Safari/Firefox have not been tested.
 
 Run the extra checks with `npm run test:edge`. Heavy software-GPU tests should run sequentially; the browser suite releases the desktop context before mobile. PNG readback on software rendering may take substantially longer than on hardware. No independent-review success is claimed: the earlier delegated review timed out; final source inspection and regression testing were completed by the parent reviewer.
 
 ## Telemetry
 
-`window.__bankharDebug` is a frozen object exposing getter snapshots for `ready`, `frameCount`, measured `frameMs` / `fps`, `renderer`, requested/effective quality and render budgets, dog position/speed/grounding/gait/roll, pause/photo state, camera, simulation time, lighting, and input state. Safe methods: `setQuality`, `setLight`, `setPaused`, `setPhoto`, `reset`, and `savePhoto`. Rendering telemetry comes from real animation-frame timestamps, not a claimed target frame rate.
+`window.__bankharDebug` is a frozen object exposing getter snapshots for `ready`, `frameCount`, measured `frameMs` / `fps`, `renderer`, requested/effective quality and render budgets, dog position/speed/grounding/gait/roll, pause/photo state, camera, simulation time, lighting, and input state. `autonomous` reports the hands-off latch; the frozen `runPath` snapshot reports elapsed autonomous time, loop radius/center, target heading, and target speed. Safe methods: `setQuality`, `setLight`, `setPaused`, `setPhoto`, `reset`, and `savePhoto`. Rendering telemetry comes from real animation-frame timestamps, not a claimed target frame rate.
 
 ## Limits
 

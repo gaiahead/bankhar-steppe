@@ -8,7 +8,7 @@ QA-ENV.txt
 PARENT-REVIEW.txt
 PARENT-REPLY.txt
 parent-*.png
-codex-result.txt
+codex-result*.txt
 codex-prompt*.txt
 __pycache__/
 *.pyc
