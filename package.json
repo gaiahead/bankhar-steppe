@@ -1,0 +1,13 @@
+{
+  "name": "bankhar-steppe-checks",
+  "private": true,
+  "scripts": {
+    "test": "node tests/smoke.cjs",
+    "test:edge": "node tests/edge.cjs",
+    "test:static": "node tests/static.cjs",
+    "test:render": "BANKHAR_RECORD=test-results/native BANKHAR_QUALITY=ultra BANKHAR_DPR=1.5 node tests/static.cjs && python3 tests/native-render.py test-results/native"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

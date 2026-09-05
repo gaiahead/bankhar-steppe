@@ -1,0 +1,14 @@
+node_modules/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+BRIEF.txt
+QA-ENV.txt
+PARENT-REVIEW.txt
+PARENT-REPLY.txt
+parent-*.png
+codex-result.txt
+codex-prompt*.txt
+__pycache__/
+*.pyc
